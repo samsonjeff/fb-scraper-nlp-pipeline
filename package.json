@@ -4,6 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "tunnel": "node tunnel.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -19,9 +21,11 @@
   },
   "homepage": "https://github.com/ShArafat58/ReplyGenie#readme",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.18.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "groq-sdk": "^1.4.0",
     "localtunnel": "^2.0.2",
     "ngrok": "^5.0.0-beta.2"
   },
