@@ -27,6 +27,7 @@
     "express": "^5.2.1",
     "groq-sdk": "^1.4.0",
     "localtunnel": "^2.0.2",
+    "mongoose": "^9.8.0",
     "ngrok": "^5.0.0-beta.2"
   },
   "allowScripts": {
