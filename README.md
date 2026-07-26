@@ -1,94 +1,108 @@
 # ReplyGenie
 
-ReplyGenie is a Facebook Messenger chatbot that automatically replies to messages sent to a Facebook Page. It is built with Node.js and Express, and it uses the Meta Messenger Platform API to receive and send messages.
+ReplyGenie is an intelligent Facebook Messenger chatbot built with Node.js and Express. It connects to the Meta Messenger Platform API to receive messages and uses AI (Groq/Gemini) to automatically generate and send contextual replies. It also features a real-time MongoDB database to log all conversations, making it an excellent data-collection tool for NLP projects.
 
 ## What it does
 
-When a customer sends a message to the connected Facebook Page, ReplyGenie receives that message through a webhook and sends an automatic reply back to the customer. This removes the need to answer every message by hand.
+When a customer sends a message to the connected Facebook Page, ReplyGenie:
+1. Receives the message via a webhook.
+2. Queries an AI model (Groq's Llama 3 by default) to generate a helpful response based on a customizable system prompt.
+3. Automatically falls back to Google Gemini if the primary AI provider fails.
+4. Saves the entire conversation history to a MongoDB database.
+5. Sends the AI's reply back to the user on Messenger.
 
-## How it works
+## Key Features
 
-The flow has three simple parts:
+- **Multi-AI Support:** Uses Groq (Llama) as the primary engine and Google Gemini as a reliable fallback.
+- **Data Collection:** Logs all `senderPSID`, `userMessage`, `aiReply`, and timestamps to a MongoDB database for future NLP training or analysis.
+- **Built-in Dashboard:** Features a live, auto-refreshing dashboard to monitor incoming messages and AI replies.
+- **Localtunnel Integration:** Easily expose your local environment to the internet using `localtunnel` without worrying about executable blocks.
 
-1. A customer sends a message to the Facebook Page.
-2. Facebook forwards that message to the app through a webhook (a public URL the app registers with Facebook).
-3. The app reads who sent the message and what they wrote, then uses the Send API to reply.
+## Tech Stack
 
-Together these steps form a basic chatbot loop: receive a message, then send a reply.
-
-## Tech stack
-
-- Node.js
-- Express
-- Axios (to call the Meta Graph API)
-- dotenv (to keep secret tokens out of the code)
-- ngrok (to expose the local server to the internet during testing)
-
-## Project structure
-
-ReplyGenie/
-├── index.js Main server (webhook verify, receive, and reply)
-├── subscribe.js One time script to subscribe the Page to the app
-├── .env Secret tokens (not committed to GitHub)
-├── .gitignore
-├── package.json
-└── README.md
-
+- **Node.js & Express** (Backend framework)
+- **Groq SDK** (Primary AI Generation)
+- **Google Generative AI** (Fallback AI Generation)
+- **Mongoose & MongoDB Atlas** (Database and Schemas)
+- **Axios** (Meta Graph API requests)
+- **Localtunnel** (Expose local server to the web)
 
 ## Prerequisites
 
-- A Facebook account, a Facebook Page, and a Meta developer account
-- Node.js installed
-- ngrok installed
+- A Facebook account, a Facebook Page, and a Meta Developer account.
+- Free API keys from [Groq](https://console.groq.com) and [Google AI Studio (Gemini)](https://aistudio.google.com).
+- A free MongoDB Atlas cluster.
+- Node.js installed.
 
 ## Setup
 
 1. Clone the repository and install dependencies:
+   ```bash
+   git clone https://github.com/ShArafat58/ReplyGenie.git
+   cd ReplyGenie
+   npm install
+   ```
 
-git clone https://github.com/ShArafat58/ReplyGenie.git
-cd ReplyGenie
-npm install
+2. Create a `.env` file in the root directory. You can use the provided template or ensure it has the following keys:
+   ```env
+   # Server config
+   PORT=3000
+   
+   # Meta Platform
+   PAGE_ACCESS_TOKEN=your_permanent_page_access_token
+   APP_SECRET=your_app_secret
+   VERIFY_TOKEN=your_custom_verify_token
+   GRAPH_API_VERSION=v25.0
+   
+   # AI Providers
+   GROQ_API_KEY=your_groq_key
+   GROQ_MODEL=llama-3.3-70b-versatile
+   GEMINI_API_KEY=your_gemini_key
+   GEMINI_MODEL=gemini-2.5-flash
+   BOT_SYSTEM_PROMPT="You are a helpful, concise assistant replying to customers over Facebook Messenger."
+   
+   # Database
+   MONGODB_URI=your_mongodb_connection_string
+   ```
 
+3. Start the server (runs the webhook and the dashboard):
+   ```bash
+   npm start
+   ```
 
-2. Create a `.env` file in the root and add your values:
+4. In a second terminal, expose your local server to the web using the built-in tunnel script:
+   ```bash
+   npm run tunnel
+   ```
+   *(Note: When you open the localtunnel URL for the first time, you must click the "Click to Continue" button in your browser to bypass the anti-abuse screen).*
 
-VERIFY_TOKEN=your_verify_token
-PAGE_ACCESS_TOKEN=your_page_access_token
+5. In the Meta App dashboard, set the webhook **Callback URL** to your localtunnel link plus `/webhook` (e.g., `https://your-url.loca.lt/webhook`), enter your `VERIFY_TOKEN`, and subscribe to the `messages` field.
 
+6. (Optional) Run the subscribe script once to link the Page to the app if you haven't done it via the Meta UI:
+   ```bash
+   node subscribe.js
+   ```
 
-3. Start the server:
+## Monitoring & NLP Data Collection
 
-node index.js
+- **Dashboard:** Visit `http://localhost:3000/dashboard` while your server is running to view a live feed of all conversations and AI fallback statistics.
+- **Database:** All conversations are saved in the `bot_conversations` collection in your MongoDB cluster. This raw text data can easily be exported later as JSONL or CSV for intent classification, sentiment analysis, or fine-tuning custom NLP models.
 
+## Deployment
 
-4. In a second terminal, expose the server with ngrok:
+This app is production-ready. To deploy it to a free host like **Render**:
+1. Push your code to GitHub (ensure `.env` is ignored!).
+2. Connect the repository to Render as a "Web Service".
+3. Use the start command `npm start`.
+4. Add all your variables from `.env` directly into the Render dashboard Environment Variables section.
+5. Update your Meta Webhook URL to the permanent Render URL.
 
-ngrok http 3000
+## Note on App Mode
 
+While your Meta app is in **Development Mode**, only people with a registered role on the app (Admin, Developer, or Tester) will trigger the webhook and receive AI replies. To make it work for the general public, the app must pass the Meta App Review process for `pages_messaging` and be switched to **Live Mode**.
 
-5. In the Meta App dashboard, set the webhook Callback URL to your ngrok link plus `/webhook`, use the same verify token, and subscribe to the `messages` field.
+## Author & License
 
-6. Run the subscribe script once to link the Page to the app:
-
-node subscribe.js
-
-
-## Testing
-
-Send a message to your Page from the Facebook account that owns the app. You should see the message appear in the server terminal and receive an automatic reply in Messenger.
-
-## Note on app mode
-
-The app runs in development mode, so only people with a role on the app (admin, developer, or tester) will get replies. To make it work for everyone, the app needs to pass Meta App Review.
-
-## Author
-
-Built by Shahriar Hossain Arafat as a learning project on the Meta Messenger Platform API.
-
-## A note on usage
-
-This project was created for my own learning and practice. You are welcome to read the code and learn from it. Please do not copy it and submit it as your own work. If you found it helpful, a mention or credit is appreciated.
-
-## License
+Built by Shahriar Hossain Arafat as a learning project on the Meta Messenger Platform API. Expanded to support multi-AI routing and NLP data collection.
 
 This project is shared for educational purposes. Please give credit if you use any part of it.
