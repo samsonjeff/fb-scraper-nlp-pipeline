@@ -1,8 +1,8 @@
 require("dotenv").config();
-const axios    = require("axios");
-const express  = require("express");
+const axios = require("axios");
+const express = require("express");
 const mongoose = require("mongoose");
-const Groq     = require("groq-sdk");
+const Groq = require("groq-sdk");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Conversation = require("./models/Conversation");
 
@@ -14,7 +14,7 @@ const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
     "You are a helpful, concise assistant replying to customers. Keep replies friendly and under 300 characters.";
 
 // ── AI Clients ────────────────────────────────────────────────────────────────
-const groq  = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ── MongoDB Connection ────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // ── Test route ────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => {
-    res.send("ReplyGenie is running ✅");
+    res.send("Messenger Bot is running ✅");
 });
 
 // ── Dashboard route ───────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ app.get("/dashboard", async (req, res) => {
 <body>
     <header>
         <span>🤖</span>
-        <h1>ReplyGenie Dashboard</h1>
+        <h1>Messenger Bot Dashboard</h1>
         <span>Auto-refreshes every 15s · Last updated: ${new Date().toLocaleTimeString()}</span>
     </header>
     <div class="container">
@@ -97,8 +97,8 @@ app.get("/dashboard", async (req, res) => {
             </div>
         </div>
         ${logs.length === 0
-            ? `<div class="empty">📭 No conversations yet. Send a message to your Facebook Page to get started!</div>`
-            : `<table>
+                ? `<div class="empty">📭 No conversations yet. Send a message to your Facebook Page to get started!</div>`
+                : `<table>
                 <thead>
                     <tr>
                         <th>Time</th>
@@ -111,7 +111,7 @@ app.get("/dashboard", async (req, res) => {
                 <tbody>${rows}</tbody>
                </table>
                <p class="refresh-note">Showing last 100 conversations · Page auto-refreshes every 15 seconds</p>`
-        }
+            }
     </div>
 </body>
 </html>`);
@@ -130,8 +130,8 @@ function escapeHtml(text) {
 
 // ── Webhook verification ──────────────────────────────────────────────────────
 app.get("/webhook", (req, res) => {
-    const mode      = req.query["hub.mode"];
-    const token     = req.query["hub.verify_token"];
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
 
     if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
@@ -189,11 +189,11 @@ async function generateAiResponse(userMessage) {
         const completion = await groq.chat.completions.create({
             messages: [
                 { role: "system", content: SYSTEM_PROMPT },
-                { role: "user",   content: userMessage   }
+                { role: "user", content: userMessage }
             ],
-            model:       process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+            model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
             temperature: 0.7,
-            max_tokens:  300,
+            max_tokens: 300,
         });
         const reply = completion.choices[0]?.message?.content;
         if (!reply) throw new Error("Empty response from Groq");
@@ -209,7 +209,7 @@ async function generateAiResponse(userMessage) {
                 systemInstruction: SYSTEM_PROMPT,
             });
             const result = await model.generateContent(userMessage);
-            const reply  = result.response.text();
+            const reply = result.response.text();
             if (!reply) throw new Error("Empty response from Gemini");
             console.log("✅ Gemini responded (fallback).");
             return { reply, provider: "gemini" };
@@ -227,9 +227,9 @@ async function sendMessage(senderPSID, text) {
         await axios.post(
             `https://graph.facebook.com/${process.env.GRAPH_API_VERSION || "v25.0"}/me/messages`,
             {
-                recipient:      { id: senderPSID },
+                recipient: { id: senderPSID },
                 messaging_type: "RESPONSE",
-                message:        { text },
+                message: { text },
             },
             { params: { access_token: process.env.PAGE_ACCESS_TOKEN } }
         );
