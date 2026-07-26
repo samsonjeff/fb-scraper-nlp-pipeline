@@ -1,10 +1,10 @@
-# ReplyGenie
+# FB-page Messenger bot
 
-ReplyGenie is an intelligent Facebook Messenger chatbot built with Node.js and Express. It connects to the Meta Messenger Platform API to receive messages and uses AI (Groq/Gemini) to automatically generate and send contextual replies. It also features a real-time MongoDB database to log all conversations, making it an excellent data-collection tool for NLP projects.
+FB-page Messenger bot is an intelligent Facebook Messenger chatbot built with Node.js and Express. It connects to the Meta Messenger Platform API to receive messages and uses AI (Groq/Gemini) to automatically generate and send contextual replies. It also features a real-time MongoDB database to log all conversations, making it an excellent data-collection tool for NLP projects.
 
 ## What it does
 
-When a customer sends a message to the connected Facebook Page, ReplyGenie:
+When a customer sends a message to the connected Facebook Page, FB-page Messenger bot:
 1. Receives the message via a webhook.
 2. Queries an AI model (Groq's Llama 3 by default) to generate a helpful response based on a customizable system prompt.
 3. Automatically falls back to Google Gemini if the primary AI provider fails.
@@ -38,8 +38,8 @@ When a customer sends a message to the connected Facebook Page, ReplyGenie:
 
 1. Clone the repository and install dependencies:
    ```bash
-   git clone https://github.com/ShArafat58/ReplyGenie.git
-   cd ReplyGenie
+   git clone https://github.com/samsonjeff/tested-messenger-bot.git
+   **cd file name**
    npm install
    ```
 
@@ -97,12 +97,8 @@ This app is production-ready. To deploy it to a free host like **Render**:
 4. Add all your variables from `.env` directly into the Render dashboard Environment Variables section.
 5. Update your Meta Webhook URL to the permanent Render URL.
 
-## Note on App Mode
-
-While your Meta app is in **Development Mode**, only people with a registered role on the app (Admin, Developer, or Tester) will trigger the webhook and receive AI replies. To make it work for the general public, the app must pass the Meta App Review process for `pages_messaging` and be switched to **Live Mode**.
-
 ## Author & License
 
-Built by Shahriar Hossain Arafat as a learning project on the Meta Messenger Platform API. Expanded to support multi-AI routing and NLP data collection.
+Built by **Samsonjeff** as a learning project on the Meta Messenger Platform API. Expanded to support multi-AI routing and NLP data collection.
 
 This project is shared for educational purposes. Please give credit if you use any part of it.
