@@ -183,41 +183,41 @@ app.post("/webhook", (req, res) => {
     }
 });
 
-// ── AI: Primary = Groq, Fallback = Gemini ────────────────────────────────────
+// ── AI: Primary = Gemini, Fallback = Groq ────────────────────────────────────
 async function generateAiResponse(userMessage) {
     try {
-        console.log("🤖 Trying Groq...");
-        const completion = await groq.chat.completions.create({
-            messages: [
-                { role: "system", content: SYSTEM_PROMPT },
-                { role: "user", content: userMessage }
-            ],
-            model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-            temperature: 0.7,
-            max_tokens: 300,
+        console.log("🤖 Trying Gemini...");
+        const model = genAI.getGenerativeModel({
+            model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            systemInstruction: SYSTEM_PROMPT,
         });
-        const reply = completion.choices[0]?.message?.content;
-        if (!reply) throw new Error("Empty response from Groq");
-        console.log("✅ Groq responded.");
-        return { reply, provider: "groq" };
+        const result = await model.generateContent(userMessage);
+        const reply = result.response.text();
+        if (!reply) throw new Error("Empty response from Gemini");
+        console.log("✅ Gemini responded.");
+        return { reply, provider: "gemini" };
 
-    } catch (groqError) {
-        console.warn(`⚠️  Groq failed (${groqError.message}). Falling back to Gemini...`);
+    } catch (geminiError) {
+        console.warn(`⚠️  Gemini failed (${geminiError.message}). Falling back to Groq...`);
 
         try {
-            const model = genAI.getGenerativeModel({
-                model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-                systemInstruction: SYSTEM_PROMPT,
+            const completion = await groq.chat.completions.create({
+                messages: [
+                    { role: "system", content: SYSTEM_PROMPT },
+                    { role: "user", content: userMessage }
+                ],
+                model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+                temperature: 0.7,
+                max_tokens: 300,
             });
-            const result = await model.generateContent(userMessage);
-            const reply = result.response.text();
-            if (!reply) throw new Error("Empty response from Gemini");
-            console.log("✅ Gemini responded (fallback).");
-            return { reply, provider: "gemini" };
+            const reply = completion.choices[0]?.message?.content;
+            if (!reply) throw new Error("Empty response from Groq");
+            console.log("✅ Groq responded (fallback).");
+            return { reply, provider: "groq" };
 
-        } catch (geminiError) {
-            console.error(`❌ Gemini also failed: ${geminiError.message}`);
-            throw geminiError;
+        } catch (groqError) {
+            console.error(`❌ Groq also failed: ${groqError.message}`);
+            throw groqError;
         }
     }
 }
@@ -244,7 +244,7 @@ async function sendMessage(senderPSID, text) {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     console.log(`📊 Dashboard    : http://localhost:${PORT}/dashboard`);
-    console.log(`🤖 Primary AI   : Groq  (${process.env.GROQ_MODEL})`);
-    console.log(`🔁 Fallback AI  : Gemini (${process.env.GEMINI_MODEL})`);
+    console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL})`);
+    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN}`);
 });
