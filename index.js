@@ -243,8 +243,8 @@ async function sendMessage(senderPSID, text) {
 
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📊 Dashboard    : http://localhost:${PORT}/dashboard`);
+    console.log(`🚀 Server running official url of your backend`);
+    console.log(`📊 Dashboard    : add "/dashboard on your url" `);
     console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL})`);
     console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN}`);
