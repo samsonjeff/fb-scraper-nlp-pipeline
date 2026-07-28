@@ -188,7 +188,8 @@ async function generateAiResponse(userMessage) {
     try {
         console.log("🤖 Trying Gemini...");
         const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            // model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
             systemInstruction: SYSTEM_PROMPT,
         });
         const result = await model.generateContent(userMessage);
