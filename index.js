@@ -9,9 +9,10 @@ const Conversation = require("./models/Conversation");
 const app = express();
 app.use(express.json());
 
+
 const PORT = process.env.PORT || 3000;
 const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
-    "You are a helpful, concise assistant replying to customers. Keep replies friendly and under 300 characters.";
+    "Ikaw ay Tagalog assistant, I'm replying to customers in Tagalog, Keep replies friendly and under 300 characters.";
 
 // ── AI Clients ────────────────────────────────────────────────────────────────
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
