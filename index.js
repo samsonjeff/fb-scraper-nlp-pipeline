@@ -297,7 +297,7 @@ app.get("/webhook", (req, res) => {
     }
 });
 
-// ── Receive messages ──────────────────────────────────────────────────────────
+// ── Receive messages - 07/29/2026
 app.post("/webhook", (req, res) => {
     const body = req.body;
 
@@ -314,10 +314,15 @@ app.post("/webhook", (req, res) => {
                 const userMessage = event.message.text;
                 console.log(`📩 Message from ${senderPSID}: ${userMessage}`);
 
+                
+                const crypto = require("crypto");
+                // const conversationId = `${senderPSID}_${new Date().toISOString().sp
+                
                 generateAiResponse(userMessage)
-                    .then(({ reply, provider }) => {
-                        // Save to MongoDB
+                .then(({ reply, provider }) => {
+                    // Save to MongoDB
                         Conversation.create({
+                            conversationId,
                             senderPSID,
                             userMessage,
                             aiReply: reply,
