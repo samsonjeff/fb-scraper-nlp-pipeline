@@ -19,37 +19,14 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ── MongoDB Connection ────────────────────────────────────────────────────────
-const fromEnv = mongoose.connect(process.env.MONGODB_URI.trim())
-    // .then(() => console.log("🗄️  MongoDB connected ✅"))
-    // .catch(err => console.error("❌ MongoDB connection error:", err.message));
-
-
-const { MongoClient, ServerApiVersion } = require('mongodb');
-const uri = fromEnv;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
-});
-
-async function run() {
-  try {
-    // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
-    // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
-    // Ensures that the client will close when you finish/error
-    await client.close();
-  }
-}
-run().catch(console.dir);
-
+mongoose.connect(process.env.MONGODB_URI.trim())
+    .then(async () => {
+        console.log("🗄️  MongoDB connected ✅");
+        // Optional ping
+        await mongoose.connection.db.admin().command({ ping: 1 });
+        console.log("Pinged MongoDB successfully");
+    })
+    .catch(err => console.error("❌ MongoDB connection error:", err.message));
 
 
 // ── Test route ────────────────────────────────────────────────────────────────
