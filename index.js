@@ -19,7 +19,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ── MongoDB Connection ────────────────────────────────────────────────────────
-mongoose.connect(process.env.MONGODB_URI)
+mongoose.connect(process.env.MONGODB_URI.trim())
     .then(() => console.log("🗄️  MongoDB connected ✅"))
     .catch(err => console.error("❌ MongoDB connection error:", err.message));
 
@@ -197,8 +197,11 @@ async function generateAiResponse(userMessage) {
         console.log("✅ Gemini responded.");
         return { reply, provider: "gemini" };
 
+ 
+    
     } catch (geminiError) {
-        console.warn(`⚠️  Gemini failed (${geminiError.message}). Falling back to Groq...`);
+    console.warn(`⚠️  Gemini failed (${geminiError.message}). Falling back to Groq...`);
+    console.error("Gemini error:", geminiError);
 
         try {
             const completion = await groq.chat.completions.create({
