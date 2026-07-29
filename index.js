@@ -19,7 +19,7 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ── MongoDB Connection ────────────────────────────────────────────────────────
-mongoose.connect(process.env.MONGODB_URI.trim())
+mongoose.connect(process.env.MONGODB_URI)
     .then(async () => {
         console.log("🗄️  MongoDB connected ✅");
         // Optional ping
@@ -34,7 +34,6 @@ app.get("/", (req, res) => {
     res.send("Messenger Bot is running ✅");
 });
 
-// ── Dashboard route ───────────────────────────────────────────────────────────
 app.get("/dashboard", async (req, res) => {
     try {
         const logs = await Conversation.find()
@@ -80,6 +79,85 @@ app.get("/dashboard", async (req, res) => {
         .badge-fallback { background: #4a1942; color: #f0abfc; }
         .empty { text-align: center; padding: 60px; color: #64748b; }
         .refresh-note { text-align: right; font-size: 0.75rem; color: #4b5563; margin-top: 12px; }
+        
+        /* Reset Button Styles */
+        .controls { display: flex; gap: 12px; margin-bottom: 20px; align-items: center; }
+        .btn-reset { 
+            background: #dc2626; 
+            color: white; 
+            border: none; 
+            padding: 10px 16px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 0.875rem; 
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .btn-reset:hover { background: #b91c1c; }
+        .btn-reset:active { transform: scale(0.98); }
+        .status-message { 
+            font-size: 0.875rem; 
+            padding: 12px 16px; 
+            border-radius: 6px; 
+            display: none;
+        }
+        .status-message.success { 
+            background: #065f46; 
+            color: #6ee7b7; 
+            display: block;
+        }
+        .status-message.error { 
+            background: #7f1d1d; 
+            color: #fca5a5; 
+            display: block;
+        }
+        
+        /* Modal Styles */
+        .modal { 
+            display: none; 
+            position: fixed; 
+            z-index: 1000; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            height: 100%; 
+            background-color: rgba(0, 0, 0, 0.7);
+        }
+        .modal-content { 
+            background-color: #1e1e2e; 
+            margin: 15% auto; 
+            padding: 30px; 
+            border: 1px solid #2d2d42;
+            border-radius: 12px; 
+            width: 90%; 
+            max-width: 400px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        .modal h2 { color: #ff6b6b; margin-bottom: 12px; }
+        .modal p { color: #e2e8f0; margin-bottom: 20px; font-size: 0.95rem; }
+        .modal-buttons { display: flex; gap: 12px; }
+        .btn-confirm { 
+            background: #dc2626; 
+            color: white; 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-weight: 600;
+            flex: 1;
+        }
+        .btn-confirm:hover { background: #b91c1c; }
+        .btn-cancel { 
+            background: #374151; 
+            color: white; 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-weight: 600;
+            flex: 1;
+        }
+        .btn-cancel:hover { background: #4b5563; }
     </style>
 </head>
 <body>
@@ -89,6 +167,11 @@ app.get("/dashboard", async (req, res) => {
         <span>Auto-refreshes every 15s · Last updated: ${new Date().toLocaleTimeString()}</span>
     </header>
     <div class="container">
+        <div class="controls">
+            <button class="btn-reset" onclick="openResetModal()">🗑️ Reset Database</button>
+            <div id="statusMessage" class="status-message"></div>
+        </div>
+        
         <div class="stat-bar">
             <div class="stat">
                 <div class="label">Total Conversations</div>
@@ -120,6 +203,71 @@ app.get("/dashboard", async (req, res) => {
                <p class="refresh-note">Showing last 100 conversations · Page auto-refreshes every 15 seconds</p>`
             }
     </div>
+
+    <!-- Reset Confirmation Modal -->
+    <div id="resetModal" class="modal">
+        <div class="modal-content">
+            <h2>⚠️ Confirm Reset</h2>
+            <p>Are you sure you want to delete ALL conversations? This action cannot be undone.</p>
+            <div class="modal-buttons">
+                <button class="btn-confirm" onclick="confirmReset()">Yes, Delete All</button>
+                <button class="btn-cancel" onclick="closeResetModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openResetModal() {
+            document.getElementById('resetModal').style.display = 'block';
+        }
+
+        function closeResetModal() {
+            document.getElementById('resetModal').style.display = 'none';
+        }
+
+        async function confirmReset() {
+            const statusDiv = document.getElementById('statusMessage');
+            const resetBtn = document.querySelector('.btn-reset');
+            
+            try {
+                resetBtn.disabled = true;
+                resetBtn.textContent = '⏳ Resetting...';
+
+                const response = await fetch('/api/reset-database', {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': prompt('Enter API Key to confirm reset:')
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    statusDiv.className = 'status-message success';
+                    statusDiv.textContent = '✅ ' + data.message;
+                    closeResetModal();
+                    setTimeout(() => location.reload(), 2000);
+                } else {
+                    statusDiv.className = 'status-message error';
+                    statusDiv.textContent = '❌ ' + data.error;
+                }
+            } catch (err) {
+                statusDiv.className = 'status-message error';
+                statusDiv.textContent = '❌ Error: ' + err.message;
+            } finally {
+                resetBtn.disabled = false;
+                resetBtn.textContent = '🗑️ Reset Database';
+            }
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('resetModal');
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
+    </script>
 </body>
 </html>`);
     } catch (err) {
@@ -248,6 +396,27 @@ async function sendMessage(senderPSID, text) {
         console.error("❌ Error sending reply:", error.response?.data || error.message);
     }
 }
+
+// ── API: Reset entire database - 07/29/2026
+app.post("/api/reset-database", async (req, res) => {
+    try {
+        const apiKey = req.headers["x-api-key"];
+        if (apiKey !== process.env.INTERNAL_API_KEY) {
+            return res.status(403).json({ error: "Unauthorized - Invalid API key" });
+        }
+
+        // Delete all conversations
+        const result = await Conversation.deleteMany({});
+        
+        console.log(`🗑️  Database reset! Deleted ${result.deletedCount} documents`);
+        res.json({
+            success: true,
+            message: `Database reset successfully! Deleted ${result.deletedCount} conversations.`
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
