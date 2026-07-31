@@ -442,7 +442,7 @@ async function generateAiResponse(userMessage, senderPSID) {
 
         console.log("🤖 Trying Gemini with conversation context...");
         const result = await genAI.models.generateContent({
-            model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
             contents: `${contextPrompt}\n${userMessage}`,
             // // 08/01/2026
             // contents: userMessage,
