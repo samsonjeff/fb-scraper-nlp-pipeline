@@ -8,6 +8,7 @@ const Conversation = require("./models/Conversation");
 const { GoogleGenAI } = require("@google/genai");
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+
 const app = express();
 app.use(express.json());
 
@@ -442,7 +443,7 @@ async function generateAiResponse(userMessage, senderPSID) {
 
         console.log("🤖 Trying Gemini with conversation context...");
         const result = await genAI.models.generateContent({
-            model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
+            model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
             contents: `${contextPrompt}\n${userMessage}`,
             // // 08/01/2026
             // contents: userMessage,
