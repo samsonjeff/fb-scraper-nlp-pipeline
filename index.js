@@ -3,8 +3,10 @@ const axios = require("axios");
 const express = require("express");
 const mongoose = require("mongoose");
 const Groq = require("groq-sdk");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Conversation = require("./models/Conversation");
+
+const { GoogleGenAI } = require("@google/genai");
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
 app.use(express.json());
@@ -16,7 +18,7 @@ const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
 
 // ── AI Clients ────────────────────────────────────────────────────────────────
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ── MongoDB Connection ────────────────────────────────────────────────────────
 mongoose.connect(process.env.MONGODB_URI)
@@ -288,7 +290,7 @@ app.get("/webhook", (req, res) => {
 
     generateAiResponse(userMessage, senderPSID)
     .then(({reply, provider})=> { // 08/01/2026 update param
-        
+
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
@@ -446,7 +448,9 @@ async function generateAiResponse(userMessage, senderPSID){
         console.log("🤖 Trying Gemini with conversation context...");
         const result = await genAI.models.generateContent({
             model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-            contents: `${contextPrompt}\n${userMessage}`,
+            // contents: `${contextPrompt}\n${userMessage}`,
+            // 08/01/2026
+            contents: userMessage,
             config: { systemInstruction: SYSTEM_PROMPT }
         });
         const reply = result.text;
