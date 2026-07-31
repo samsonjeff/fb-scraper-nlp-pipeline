@@ -54,7 +54,7 @@ app.get("/dashboard", async (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ReplyGenie Dashboard</title>
+    <title>MessBot Dashboard</title>
     <meta http-equiv="refresh" content="15">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -285,6 +285,10 @@ function escapeHtml(text) {
 
 // ── Webhook verification ──────────────────────────────────────────────────────
 app.get("/webhook", (req, res) => {
+
+    generateAiResponse(userMessage, senderPSID)
+    .then(({reply, provider})=> { // 08/01/2026 update param
+        
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
@@ -295,94 +299,197 @@ app.get("/webhook", (req, res) => {
     } else {
         res.sendStatus(403);
     }
+    })
 });
 
-// ── Receive messages - 07/29/2026
-app.post("/webhook", (req, res) => {
-    const body = req.body;
+// // ── Receive messages - 07/29/2026
+// app.post("/webhook", (req, res) => {
+//     const body = req.body;
 
-    if (body.object === "page") {
-        res.status(200).send("EVENT_RECEIVED");
+//     if (body.object === "page") {
+//         res.status(200).send("EVENT_RECEIVED");
 
-        body.entry.forEach((entry) => {
-            const event = entry.messaging[0];
-            if (!event) return;
+//         body.entry.forEach((entry) => {
+//             const event = entry.messaging[0];
+//             if (!event) return;
+
+//             const senderPSID = event.sender.id;
+
+//             if (event.message && event.message.text) {
+//                 const userMessage = event.message.text;
+//                 console.log(`📩 Message from ${senderPSID}: ${userMessage}`);
+                
+//                 generateAiResponse(userMessage)
+//                 .then(({ reply, provider }) => {
+//                     // Save to MongoDB
+//                         Conversation.create({
+//                             senderPSID,
+//                             userMessage,
+//                             aiReply: reply,
+//                             provider
+//                         }).catch(err => console.error("⚠️  DB save error:", err.message));
+
+//                         sendMessage(senderPSID, reply);
+//                     })
+//                     .catch(err => {
+//                         console.error("❌ All AI providers failed:", err.message);
+//                         sendMessage(senderPSID, "Sorry, I'm having trouble responding right now. Please try again shortly.");
+//                     });
+//             }
+//         });
+//     } else {
+//         res.sendStatus(404);
+//     }
+// });
+
+
+// // ── Receive messages - 08/01/2026
+const crypto = require("crypto");  // at top of file
+app.post("/webhook", async (req, res) => {
+    if (req.body.object !== "page") {
+        return res.sendStatus(404);
+    }
+
+    res.status(200).send("EVENT_RECEIVED");
+
+    for (const entry of req.body.entry || []) {
+        for (const event of entry.messaging || []) {
+            if (!event.sender?.id || !event.message?.text) continue;
 
             const senderPSID = event.sender.id;
+            const userMessage = event.message.text;
 
-            if (event.message && event.message.text) {
-                const userMessage = event.message.text;
-                console.log(`📩 Message from ${senderPSID}: ${userMessage}`);
+            try {
+                const { reply, provider } = await generateAiResponse(userMessage);
+                const conversationId = crypto.randomUUID();
 
-                
-                const crypto = require("crypto");
-                // const conversationId = `${senderPSID}_${new Date().toISOString().sp
-                
-                generateAiResponse(userMessage)
-                .then(({ reply, provider }) => {
-                    // Save to MongoDB
-                        Conversation.create({
-                            conversationId,
-                            senderPSID,
-                            userMessage,
-                            aiReply: reply,
-                            provider
-                        }).catch(err => console.error("⚠️  DB save error:", err.message));
+                await Conversation.create({
+                    conversationId,
+                    senderPSID,
+                    userMessage,
+                    aiReply: reply,
+                    provider
+                });
 
-                        sendMessage(senderPSID, reply);
-                    })
-                    .catch(err => {
-                        console.error("❌ All AI providers failed:", err.message);
-                        sendMessage(senderPSID, "Sorry, I'm having trouble responding right now. Please try again shortly.");
-                    });
+                await sendMessage(senderPSID, reply);
+            } catch (err) {
+                console.error(`❌ Failed for ${senderPSID}:`, err.message);
+                try {
+                    await sendMessage(senderPSID, "Sorry, I'm having trouble responding right now.");
+                } catch (sendErr) {
+                    console.error("❌ Failed to send error message:", sendErr.message);
+                }
             }
-        });
-    } else {
-        res.sendStatus(404);
+        }
     }
 });
 
-// ── AI: Primary = Gemini, Fallback = Groq ────────────────────────────────────
-async function generateAiResponse(userMessage) {
+// // ── AI: Primary = Gemini, Fallback = Groq ────────────────────────────────────
+// async function generateAiResponse(userMessage) {
+//     try {
+//         console.log("🤖 Trying Gemini...");
+//         const model = genAI.getGenerativeModel({
+//             model: process.env.GEMINI_MODEL || "gemini-2.5-flash" || "gemini-3.5-flash",
+//             systemInstruction: SYSTEM_PROMPT,
+//         });
+//         const result = await model.generateContent(userMessage);
+//         const reply = result.response.text();
+//         if (!reply) throw new Error("Empty response from Gemini");
+//         console.log("✅ Gemini responded.");
+//         return { reply, provider: "gemini" };
+
+ 
+    
+//     } catch (geminiError) {
+//     console.warn(`⚠️  Gemini failed (${geminiError.message}). Falling back to Groq...`);
+//     console.error("Gemini error:", geminiError);
+
+//         try {
+//             const completion = await groq.chat.completions.create({
+//                 messages: [
+//                     { role: "system", content: SYSTEM_PROMPT },
+//                     { role: "user", content: userMessage }
+//                 ],
+//                 model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+//                 temperature: 0.7,
+//                 max_tokens: 300,
+//             });
+//             const reply = completion.choices[0]?.message?.content;
+//             if (!reply) throw new Error("Empty response from Groq");
+//             console.log("✅ Groq responded (fallback).");
+//             return { reply, provider: "groq" };
+
+//         } catch (groqError) {
+//             console.error(`❌ Groq also failed: ${groqError.message}`);
+//             throw groqError;
+//         }
+//     }
+// }
+
+// generate AI response 08/01/2026 udpate
+async function generateAiResponse(userMessage, senderPSID){
     try {
-        console.log("🤖 Trying Gemini...");
-        const model = genAI.getGenerativeModel({
-            model: process.env.GEMINI_MODEL || "gemini-2.5-flash" || "gemini-3.5-flash",
-            systemInstruction: SYSTEM_PROMPT,
+        // Get last 10 messages from this user
+        const history = await Conversation.find({ senderPSID })
+            .sort({ timestamp: -1 })
+            .limit(10);
+
+        // Build context string
+        const contextMessages = history.reverse().map(h => 
+            `User: ${h.userMessage}\nBot: ${h.aiReply}`
+        ).join("\n---\n");
+
+        const contextPrompt = contextMessages 
+            ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
+            : "First message from user. Respond to:";
+
+        console.log("🤖 Trying Gemini with conversation context...");
+        const result = await genAI.models.generateContent({
+            model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            contents: `${contextPrompt}\n${userMessage}`,
+            config: { systemInstruction: SYSTEM_PROMPT }
         });
-        const result = await model.generateContent(userMessage);
-        const reply = result.response.text();
+        const reply = result.text;
         if (!reply) throw new Error("Empty response from Gemini");
         console.log("✅ Gemini responded.");
         return { reply, provider: "gemini" };
 
- 
-    
     } catch (geminiError) {
-    console.warn(`⚠️  Gemini failed (${geminiError.message}). Falling back to Groq...`);
-    console.error("Gemini error:", geminiError);
+        console.warn(`⚠️ Gemini failed. Falling back to Groq...`);
 
         try {
+            // Same for Groq
+            const history = await Conversation.find({ senderPSID })
+                .sort({ timestamp: -1 })
+                .limit(10);
+
+            const contextMessages = history.reverse().map(h => 
+                `User: ${h.userMessage}\nBot: ${h.aiReply}`
+            ).join("\n---\n");
+
+            const messages = [
+                { role: "system", content: SYSTEM_PROMPT },
+                ...(contextMessages ? [{ role: "user", content: `Context:\n${contextMessages}` }] : []),
+                { role: "user", content: userMessage }
+            ];
+
             const completion = await groq.chat.completions.create({
-                messages: [
-                    { role: "system", content: SYSTEM_PROMPT },
-                    { role: "user", content: userMessage }
-                ],
+                messages,
                 model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
                 temperature: 0.7,
                 max_tokens: 300,
             });
             const reply = completion.choices[0]?.message?.content;
             if (!reply) throw new Error("Empty response from Groq");
-            console.log("✅ Groq responded (fallback).");
+            console.log("✅ Groq responded.");
             return { reply, provider: "groq" };
 
         } catch (groqError) {
-            console.error(`❌ Groq also failed: ${groqError.message}`);
+            console.error(`❌ Groq failed: ${groqError.message}`);
             throw groqError;
         }
     }
-}
+};
 
 // ── Send reply via Messenger ──────────────────────────────────────────────────
 async function sendMessage(senderPSID, text) {
@@ -417,6 +524,43 @@ app.post("/api/reset-database", async (req, res) => {
         res.json({
             success: true,
             message: `Database reset successfully! Deleted ${result.deletedCount} conversations.`
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// API enpoint for NLP HTTP request 08/01/2026
+// ── API: Get full conversation history for a user 
+app.get("/api/user-history/:senderPSID", async (req, res) => {
+    try {
+        const apiKey = req.headers["x-api-key"];
+        if (apiKey !== process.env.INTERNAL_API_KEY) {
+            return res.status(403).json({ error: "Unauthorized" });
+        }
+
+        const { senderPSID } = req.params;
+        const { limit = 50 } = req.query;
+
+        const history = await Conversation.find({ senderPSID })
+            .sort({ timestamp: 1 })  // oldest first
+            .limit(parseInt(limit));
+
+        // Format for NLP context
+        const formattedHistory = history.map(msg => ({
+            role: "user",
+            content: msg.userMessage,
+            timestamp: msg.timestamp
+        }, {
+            role: "assistant",
+            content: msg.aiReply,
+            timestamp: msg.timestamp
+        })).flat();
+
+        res.json({
+            senderPSID,
+            totalMessages: history.length,
+            conversationHistory: formattedHistory
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
