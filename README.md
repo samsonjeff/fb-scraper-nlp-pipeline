@@ -102,3 +102,8 @@ This app is production-ready. To deploy it to a free host like **Render**:
 Built by **Samsonjeff** as a learning project on the Meta Messenger Platform API. Expanded to support multi-AI routing and NLP data collection.
 
 This project is shared for educational purposes. Please give credit if you use any part of it.
+
+
+
+// mongodb+srv://R3SPONDE:QdxhhPjedo36oVwz@cluster0.bjtdl8j.mongodb.net/?appName=Cluster0
+// mongodb+srv://R3SPONDE: QdxhhPjedo36oVwz@cluster0.bjtdl8j.mongodb.net/responde_bot?retryWrites=true&w=majority&appName=Cluster0

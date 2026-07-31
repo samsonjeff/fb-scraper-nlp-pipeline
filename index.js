@@ -287,10 +287,6 @@ function escapeHtml(text) {
 
 // ── Webhook verification ──────────────────────────────────────────────────────
 app.get("/webhook", (req, res) => {
-
-    generateAiResponse(userMessage, senderPSID)
-    .then(({reply, provider})=> { // 08/01/2026 update param
-
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
@@ -301,7 +297,6 @@ app.get("/webhook", (req, res) => {
     } else {
         res.sendStatus(403);
     }
-    })
 });
 
 // // ── Receive messages - 07/29/2026

@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 
 const conversationSchema = new mongoose.Schema({
+    conversationId: { type: String, required: true, index: true },
     senderPSID: { type: String, required: true, index: true },
     userMessage: { type: String, required: true },
     aiReply:     { type: String, required: true },
