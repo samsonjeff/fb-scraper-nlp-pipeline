@@ -315,7 +315,7 @@ app.get("/webhook", (req, res) => {
 //             if (event.message && event.message.text) {
 //                 const userMessage = event.message.text;
 //                 console.log(`📩 Message from ${senderPSID}: ${userMessage}`);
-                
+
 //                 generateAiResponse(userMessage)
 //                 .then(({ reply, provider }) => {
 //                     // Save to MongoDB
@@ -357,7 +357,7 @@ app.post("/webhook", async (req, res) => {
             const userMessage = event.message.text;
 
             try {
-                const { reply, provider } = await generateAiResponse(userMessage);
+                const { reply, provider } = await generateAiResponse(userMessage, senderPSID);
                 const conversationId = crypto.randomUUID();
 
                 await Conversation.create({
@@ -395,8 +395,8 @@ app.post("/webhook", async (req, res) => {
 //         console.log("✅ Gemini responded.");
 //         return { reply, provider: "gemini" };
 
- 
-    
+
+
 //     } catch (geminiError) {
 //     console.warn(`⚠️  Gemini failed (${geminiError.message}). Falling back to Groq...`);
 //     console.error("Gemini error:", geminiError);
@@ -424,7 +424,7 @@ app.post("/webhook", async (req, res) => {
 // }
 
 // generate AI response 08/01/2026 udpate
-async function generateAiResponse(userMessage, senderPSID){
+async function generateAiResponse(userMessage, senderPSID) {
     try {
         // Get last 10 messages from this user
         const history = await Conversation.find({ senderPSID })
@@ -432,17 +432,17 @@ async function generateAiResponse(userMessage, senderPSID){
             .limit(10);
 
         // Build context string
-        const contextMessages = history.reverse().map(h => 
+        const contextMessages = history.reverse().map(h =>
             `User: ${h.userMessage}\nBot: ${h.aiReply}`
         ).join("\n---\n");
 
-        const contextPrompt = contextMessages 
+        const contextPrompt = contextMessages
             ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
             : "First message from user. Respond to:";
 
         console.log("🤖 Trying Gemini with conversation context...");
         const result = await genAI.models.generateContent({
-            model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            model: process.env.GEMINI_MODEL || "gemini-3.5-flash",
             contents: `${contextPrompt}\n${userMessage}`,
             // // 08/01/2026
             // contents: userMessage,
@@ -462,7 +462,7 @@ async function generateAiResponse(userMessage, senderPSID){
                 .sort({ timestamp: -1 })
                 .limit(10);
 
-            const contextMessages = history.reverse().map(h => 
+            const contextMessages = history.reverse().map(h =>
                 `User: ${h.userMessage}\nBot: ${h.aiReply}`
             ).join("\n---\n");
 
@@ -518,7 +518,7 @@ app.post("/api/reset-database", async (req, res) => {
 
         // Delete all conversations
         const result = await Conversation.deleteMany({});
-        
+
         console.log(`🗑️  Database reset! Deleted ${result.deletedCount} documents`);
         res.json({
             success: true,
