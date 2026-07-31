@@ -454,7 +454,7 @@ async function generateAiResponse(userMessage, senderPSID){
         return { reply, provider: "gemini" };
 
     } catch (geminiError) {
-        console.warn(`⚠️ Gemini failed. Falling back to Groq...`);
+        console.warn(`⚠️ Gemini failed: ${geminiError.message || geminiError}. Falling back to Groq...`);
 
         try {
             // Same for Groq
