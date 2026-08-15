@@ -300,47 +300,6 @@ app.get("/webhook", (req, res) => {
     }
 });
 
-// // ── Receive messages - 07/29/2026
-// app.post("/webhook", (req, res) => {
-//     const body = req.body;
-
-//     if (body.object === "page") {
-//         res.status(200).send("EVENT_RECEIVED");
-
-//         body.entry.forEach((entry) => {
-//             const event = entry.messaging[0];
-//             if (!event) return;
-
-//             const senderPSID = event.sender.id;
-
-//             if (event.message && event.message.text) {
-//                 const userMessage = event.message.text;
-//                 console.log(`📩 Message from ${senderPSID}: ${userMessage}`);
-
-//                 generateAiResponse(userMessage)
-//                 .then(({ reply, provider }) => {
-//                     // Save to MongoDB
-//                         Conversation.create({
-//                             senderPSID,
-//                             userMessage,
-//                             aiReply: reply,
-//                             provider
-//                         }).catch(err => console.error("⚠️  DB save error:", err.message));
-
-//                         sendMessage(senderPSID, reply);
-//                     })
-//                     .catch(err => {
-//                         console.error("❌ All AI providers failed:", err.message);
-//                         sendMessage(senderPSID, "Sorry, I'm having trouble responding right now. Please try again shortly.");
-//                     });
-//             }
-//         });
-//     } else {
-//         res.sendStatus(404);
-//     }
-// });
-
-
 // // ── Receive messages - 08/01/2026
 const crypto = require("crypto");  // at top of file
 app.post("/webhook", async (req, res) => {
@@ -382,48 +341,6 @@ app.post("/webhook", async (req, res) => {
     }
 });
 
-// // ── AI: Primary = Gemini, Fallback = Groq ────────────────────────────────────
-// async function generateAiResponse(userMessage) {
-//     try {
-//         console.log("🤖 Trying Gemini...");
-//         const model = genAI.getGenerativeModel({
-//             model: process.env.GEMINI_MODEL || "gemini-2.5-flash" || "gemini-3.5-flash",
-//             systemInstruction: SYSTEM_PROMPT,
-//         });
-//         const result = await model.generateContent(userMessage);
-//         const reply = result.response.text();
-//         if (!reply) throw new Error("Empty response from Gemini");
-//         console.log("✅ Gemini responded.");
-//         return { reply, provider: "gemini" };
-
-
-
-//     } catch (geminiError) {
-//     console.warn(`⚠️  Gemini failed (${geminiError.message}). Falling back to Groq...`);
-//     console.error("Gemini error:", geminiError);
-
-//         try {
-//             const completion = await groq.chat.completions.create({
-//                 messages: [
-//                     { role: "system", content: SYSTEM_PROMPT },
-//                     { role: "user", content: userMessage }
-//                 ],
-//                 model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-//                 temperature: 0.7,
-//                 max_tokens: 300,
-//             });
-//             const reply = completion.choices[0]?.message?.content;
-//             if (!reply) throw new Error("Empty response from Groq");
-//             console.log("✅ Groq responded (fallback).");
-//             return { reply, provider: "groq" };
-
-//         } catch (groqError) {
-//             console.error(`❌ Groq also failed: ${groqError.message}`);
-//             throw groqError;
-//         }
-//     }
-// }
-
 // generate AI response 08/01/2026 udpate
 async function generateAiResponse(userMessage, senderPSID) {
     try {
@@ -443,7 +360,7 @@ async function generateAiResponse(userMessage, senderPSID) {
 
         console.log("🤖 Trying Gemini with conversation context...");
         const result = await genAI.models.generateContent({
-            model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+            model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
             contents: `${contextPrompt}\n${userMessage}`,
             // // 08/01/2026
             // contents: userMessage,
