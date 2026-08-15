@@ -33,9 +33,29 @@ mongoose.connect(process.env.MONGODB_URI)
 
 
 // ── Test route ────────────────────────────────────────────────────────────────
-app.get("/", (req, res) => {
-    res.send("Messenger Bot is running ✅");
-});
+// GET /            → shows all conversations as formatted JSON on screen
+// GET /?psid=xxx   → shows conversations for a specific sender PSID
+app.get("/", async (req, res) => {
+    try {
+        const { psid, limit = 100 } = req.query;
+        const filter = psid ? { senderPSID: psid } : {};
+
+        const conversations = await Conversation.find(filter)
+            .sort({ timestamp: -1 })
+            .limit(parseInt(limit));
+
+        const payload = {
+            success: true,
+            total: conversations.length,
+            conversations
+        };
+
+        // Display as readable formatted JSON on the browser screen
+        return res.send(`<pre>${JSON.stringify(payload, null, 2)}</pre>`);
+    } catch (e) {
+        return res.status(500).send(e.message);
+    }
+}); // update for api testing (Aug. 15, 2026)
 
 app.get("/dashboard", async (req, res) => {
     try {
