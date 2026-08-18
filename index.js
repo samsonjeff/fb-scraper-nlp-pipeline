@@ -1,7 +1,6 @@
 require("dotenv").config();
 const axios = require("axios");
 const express = require("express");
-const mongoose = require("mongoose");
 const Groq = require("groq-sdk");
 const Conversation = require("./models/Conversation");
 
@@ -21,21 +20,65 @@ const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 // const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ── MongoDB Connection ────────────────────────────────────────────────────────
-mongoose.connect(process.env.MONGODB_URI)
-    .then(async () => {
-        console.log("🗄️  MongoDB connected ✅");
-        // Optional ping
-        await mongoose.connection.db.admin().command({ ping: 1 });
-        console.log("Pinged MongoDB successfully");
-    })
-    .catch(err => console.error("❌ MongoDB connection error:", err.message));
+// ── Supabase Connection ───────────────────────────────────────────────────────
+console.log("🗄️  Supabase client initialised ✅");
+console.log(`   URL : ${process.env.SUPABASE_URL}`);
+
+// ── FB Page Scraper ──────────────────────────────────────────────────────────
+app.use("/scraper", require("./routes/scraper"));
+const { startCronJobs } = require("./jobs/cron");
+startCronJobs();
 
 
 // ── Test route ────────────────────────────────────────────────────────────────
-app.get("/", (req, res) => {
-    res.send("Messenger Bot is running ✅");
-});
+// GET /            → shows all conversations + scraped posts/comments as JSON
+// GET /?psid=xxx   → shows conversations for a specific sender PSID
+app.get("/", async (req, res) => {
+    try {
+        const supabase = require("./supabase/client");
+        const { psid, limit = 100 } = req.query;
+        const filter = psid ? { senderPSID: psid } : {};
+
+        const conversations = await Conversation.find(filter)
+            .sort({ timestamp: -1 })
+            .limit(parseInt(limit));
+
+        // Fetch scraped posts
+        const { data: posts } = await supabase
+            .from("fb_posts")
+            .select("*")
+            .order("post_date", { ascending: false })
+            .limit(parseInt(limit));
+
+        // Fetch scraped comments
+        const { data: comments } = await supabase
+            .from("fb_comments")
+            .select("*")
+            .order("comment_date", { ascending: false })
+            .limit(parseInt(limit));
+
+        const payload = {
+            success: true,
+            bot_conversations: {
+                total: conversations.length,
+                data: conversations
+            },
+            scraped_posts: {
+                total: (posts || []).length,
+                data: posts || []
+            },
+            scraped_comments: {
+                total: (comments || []).length,
+                data: comments || []
+            }
+        };
+
+        // Display as readable formatted JSON on the browser screen
+        return res.send(`<pre>${JSON.stringify(payload, null, 2)}</pre>`);
+    } catch (e) {
+        return res.status(500).send(e.message);
+    }
+}); // updated Aug. 19, 2026
 
 app.get("/dashboard", async (req, res) => {
     try {
@@ -300,47 +343,6 @@ app.get("/webhook", (req, res) => {
     }
 });
 
-// // ── Receive messages - 07/29/2026
-// app.post("/webhook", (req, res) => {
-//     const body = req.body;
-
-//     if (body.object === "page") {
-//         res.status(200).send("EVENT_RECEIVED");
-
-//         body.entry.forEach((entry) => {
-//             const event = entry.messaging[0];
-//             if (!event) return;
-
-//             const senderPSID = event.sender.id;
-
-//             if (event.message && event.message.text) {
-//                 const userMessage = event.message.text;
-//                 console.log(`📩 Message from ${senderPSID}: ${userMessage}`);
-
-//                 generateAiResponse(userMessage)
-//                 .then(({ reply, provider }) => {
-//                     // Save to MongoDB
-//                         Conversation.create({
-//                             senderPSID,
-//                             userMessage,
-//                             aiReply: reply,
-//                             provider
-//                         }).catch(err => console.error("⚠️  DB save error:", err.message));
-
-//                         sendMessage(senderPSID, reply);
-//                     })
-//                     .catch(err => {
-//                         console.error("❌ All AI providers failed:", err.message);
-//                         sendMessage(senderPSID, "Sorry, I'm having trouble responding right now. Please try again shortly.");
-//                     });
-//             }
-//         });
-//     } else {
-//         res.sendStatus(404);
-//     }
-// });
-
-
 // // ── Receive messages - 08/01/2026
 const crypto = require("crypto");  // at top of file
 app.post("/webhook", async (req, res) => {
@@ -382,48 +384,6 @@ app.post("/webhook", async (req, res) => {
     }
 });
 
-// // ── AI: Primary = Gemini, Fallback = Groq ────────────────────────────────────
-// async function generateAiResponse(userMessage) {
-//     try {
-//         console.log("🤖 Trying Gemini...");
-//         const model = genAI.getGenerativeModel({
-//             model: process.env.GEMINI_MODEL || "gemini-2.5-flash" || "gemini-3.5-flash",
-//             systemInstruction: SYSTEM_PROMPT,
-//         });
-//         const result = await model.generateContent(userMessage);
-//         const reply = result.response.text();
-//         if (!reply) throw new Error("Empty response from Gemini");
-//         console.log("✅ Gemini responded.");
-//         return { reply, provider: "gemini" };
-
-
-
-//     } catch (geminiError) {
-//     console.warn(`⚠️  Gemini failed (${geminiError.message}). Falling back to Groq...`);
-//     console.error("Gemini error:", geminiError);
-
-//         try {
-//             const completion = await groq.chat.completions.create({
-//                 messages: [
-//                     { role: "system", content: SYSTEM_PROMPT },
-//                     { role: "user", content: userMessage }
-//                 ],
-//                 model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-//                 temperature: 0.7,
-//                 max_tokens: 300,
-//             });
-//             const reply = completion.choices[0]?.message?.content;
-//             if (!reply) throw new Error("Empty response from Groq");
-//             console.log("✅ Groq responded (fallback).");
-//             return { reply, provider: "groq" };
-
-//         } catch (groqError) {
-//             console.error(`❌ Groq also failed: ${groqError.message}`);
-//             throw groqError;
-//         }
-//     }
-// }
-
 // generate AI response 08/01/2026 udpate
 async function generateAiResponse(userMessage, senderPSID) {
     try {
@@ -443,7 +403,7 @@ async function generateAiResponse(userMessage, senderPSID) {
 
         console.log("🤖 Trying Gemini with conversation context...");
         const result = await genAI.models.generateContent({
-            model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+            model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
             contents: `${contextPrompt}\n${userMessage}`,
             // // 08/01/2026
             // contents: userMessage,
@@ -574,4 +534,5 @@ app.listen(PORT, () => {
     console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL})`);
     console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN}`);
+    console.log(`📰 FB Scraper   : hourly cron active (FB_PAGE_ID: ${process.env.FB_PAGE_ID || 'NOT SET'})`);
 });
