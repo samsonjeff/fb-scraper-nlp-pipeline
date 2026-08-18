@@ -1,7 +1,6 @@
 require("dotenv").config();
 const axios = require("axios");
 const express = require("express");
-const mongoose = require("mongoose");
 const Groq = require("groq-sdk");
 const Conversation = require("./models/Conversation");
 
@@ -21,15 +20,9 @@ const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 // const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ── MongoDB Connection ────────────────────────────────────────────────────────
-mongoose.connect(process.env.MONGODB_URI)
-    .then(async () => {
-        console.log("🗄️  MongoDB connected ✅");
-        // Optional ping
-        await mongoose.connection.db.admin().command({ ping: 1 });
-        console.log("Pinged MongoDB successfully");
-    })
-    .catch(err => console.error("❌ MongoDB connection error:", err.message));
+// ── Supabase Connection ───────────────────────────────────────────────────────
+console.log("🗄️  Supabase client initialised ✅");
+console.log(`   URL : ${process.env.SUPABASE_URL}`);
 
 
 // ── Test route ────────────────────────────────────────────────────────────────

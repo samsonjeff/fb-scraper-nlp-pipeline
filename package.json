@@ -22,12 +22,12 @@
   "homepage": "https://github.com/ShArafat58/ReplyGenie#readme",
   "dependencies": {
     "@google/genai": "^2.15.0",
+    "@supabase/supabase-js": "^2.112.3",
     "axios": "^1.18.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "groq-sdk": "^1.4.0",
     "localtunnel": "^2.0.2",
-    "mongoose": "^9.8.0",
     "ngrok": "^5.0.0-beta.2"
   },
   "allowScripts": {
