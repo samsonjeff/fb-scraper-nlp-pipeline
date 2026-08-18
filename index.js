@@ -31,10 +31,11 @@ startCronJobs();
 
 
 // ── Test route ────────────────────────────────────────────────────────────────
-// GET /            → shows all conversations as formatted JSON on screen
+// GET /            → shows all conversations + scraped posts/comments as JSON
 // GET /?psid=xxx   → shows conversations for a specific sender PSID
 app.get("/", async (req, res) => {
     try {
+        const supabase = require("./supabase/client");
         const { psid, limit = 100 } = req.query;
         const filter = psid ? { senderPSID: psid } : {};
 
@@ -42,10 +43,34 @@ app.get("/", async (req, res) => {
             .sort({ timestamp: -1 })
             .limit(parseInt(limit));
 
+        // Fetch scraped posts
+        const { data: posts } = await supabase
+            .from("fb_posts")
+            .select("*")
+            .order("post_date", { ascending: false })
+            .limit(parseInt(limit));
+
+        // Fetch scraped comments
+        const { data: comments } = await supabase
+            .from("fb_comments")
+            .select("*")
+            .order("comment_date", { ascending: false })
+            .limit(parseInt(limit));
+
         const payload = {
             success: true,
-            total: conversations.length,
-            conversations
+            bot_conversations: {
+                total: conversations.length,
+                data: conversations
+            },
+            scraped_posts: {
+                total: (posts || []).length,
+                data: posts || []
+            },
+            scraped_comments: {
+                total: (comments || []).length,
+                data: comments || []
+            }
         };
 
         // Display as readable formatted JSON on the browser screen
@@ -53,7 +78,7 @@ app.get("/", async (req, res) => {
     } catch (e) {
         return res.status(500).send(e.message);
     }
-}); // update for api testing (Aug. 15, 2026)
+}); // updated Aug. 19, 2026
 
 app.get("/dashboard", async (req, res) => {
     try {
