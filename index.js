@@ -24,6 +24,11 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 console.log("🗄️  Supabase client initialised ✅");
 console.log(`   URL : ${process.env.SUPABASE_URL}`);
 
+// ── FB Page Scraper ──────────────────────────────────────────────────────────
+app.use("/scraper", require("./routes/scraper"));
+const { startCronJobs } = require("./jobs/cron");
+startCronJobs();
+
 
 // ── Test route ────────────────────────────────────────────────────────────────
 // GET /            → shows all conversations as formatted JSON on screen
@@ -504,4 +509,5 @@ app.listen(PORT, () => {
     console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL})`);
     console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN}`);
+    console.log(`📰 FB Scraper   : hourly cron active (FB_PAGE_ID: ${process.env.FB_PAGE_ID || 'NOT SET'})`);
 });

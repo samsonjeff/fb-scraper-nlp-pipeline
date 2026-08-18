@@ -28,7 +28,8 @@
     "express": "^5.2.1",
     "groq-sdk": "^1.4.0",
     "localtunnel": "^2.0.2",
-    "ngrok": "^5.0.0-beta.2"
+    "ngrok": "^5.0.0-beta.2",
+    "node-cron": "^4.6.0"
   },
   "allowScripts": {
     "ngrok@5.0.0-beta.2": true
