@@ -2,6 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const supabase = require("../supabase/client");
 const { detectBarangay, detectIncidentType } = require("../utils/barangays");
+const { requireApiKey } = require("../utils/auth");
 
 const router = express.Router();
 
@@ -120,13 +121,8 @@ async function runScraper() {
 }
 
 // ── POST /scraper/run — manually trigger scrape ─────────────────────────────
-router.post("/run", async (req, res) => {
+router.post("/run", requireApiKey, async (req, res) => {
     try {
-        const apiKey = req.headers["x-api-key"];
-        if (apiKey !== process.env.INTERNAL_API_KEY) {
-            return res.status(403).json({ error: "Unauthorized — Invalid API key" });
-        }
-
         const result = await runScraper();
         res.json({ success: true, ...result });
     } catch (err) {
