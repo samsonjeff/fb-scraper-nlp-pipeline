@@ -1,6 +1,6 @@
-# Responde Backend — Talisay Batangas Incident System
+# fb-scraper-nlp-pipeline
 
-Responde Backend is a unified Express.js service hosted on Render that serves as the data collection and processing engine for the Talisay, Batangas Incident System. It handles automated emergency messaging via Facebook Messenger and pulls public page activity via the Meta Graph API to log local incidents (such as floods, fires, landslides, etc.) in real time.
+fb-scraper-nlp-pipeline is a unified Express.js service hosted on Render that serves as the data collection and processing engine for the Talisay, Batangas Incident System. It handles automated emergency messaging via Facebook Messenger and pulls public page activity via the Meta Graph API to log local incidents (such as floods, fires, landslides, etc.) in real time.
 
 All data is structured and saved within a single PostgreSQL database powered by **Supabase**.
 
