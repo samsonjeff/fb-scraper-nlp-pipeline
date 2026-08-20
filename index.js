@@ -1,16 +1,45 @@
 require("dotenv").config();
 const axios = require("axios");
 const express = require("express");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const crypto = require("crypto");
 const Groq = require("groq-sdk");
 const Conversation = require("./models/Conversation");
-
 const { GoogleGenAI } = require("@google/genai");
+const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
+
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-
 const app = express();
-app.use(express.json());
 
+// ── Security Middleware ───────────────────────────────────────────────────────
+app.use(helmet());
+
+// Preserve raw body buffer for HMAC signature verification in webhooks
+app.use(express.json({
+    verify: (req, res, buf) => {
+        req.rawBody = buf;
+    }
+}));
+
+// General rate limiter for standard endpoints
+const generalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 200, // Limit each IP to 200 requests per window
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests, please try again later." }
+});
+app.use(generalLimiter);
+
+// Dedicated rate limiter for webhook endpoint
+const webhookLimiter = rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false
+});
 
 const PORT = process.env.PORT || 3000;
 const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
@@ -18,7 +47,6 @@ const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
 
 // ── AI Clients ────────────────────────────────────────────────────────────────
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-// const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 // ── Supabase Connection ───────────────────────────────────────────────────────
 console.log("🗄️  Supabase client initialised ✅");
@@ -30,10 +58,19 @@ const { startCronJobs } = require("./jobs/cron");
 startCronJobs();
 
 
-// ── Test route ────────────────────────────────────────────────────────────────
-// GET /            → shows all conversations + scraped posts/comments as JSON
-// GET /?psid=xxx   → shows conversations for a specific sender PSID
-app.get("/", async (req, res) => {
+// ── Health Check ─────────────────────────────────────────────────────────────
+// GET / → safe health check status
+app.get("/", (req, res) => {
+    res.json({
+        status: "healthy",
+        service: "responde-backend",
+        timestamp: new Date().toISOString()
+    });
+});
+
+// ── Protected Debug / Inspection API ─────────────────────────────────────────
+// GET /api/debug/conversations (Requires x-api-key header)
+app.get("/api/debug/conversations", requireApiKey, async (req, res) => {
     try {
         const supabase = require("./supabase/client");
         const { psid, limit = 100 } = req.query;
@@ -57,7 +94,7 @@ app.get("/", async (req, res) => {
             .order("comment_date", { ascending: false })
             .limit(parseInt(limit));
 
-        const payload = {
+        return res.json({
             success: true,
             bot_conversations: {
                 total: conversations.length,
@@ -71,24 +108,13 @@ app.get("/", async (req, res) => {
                 total: (comments || []).length,
                 data: comments || []
             }
-        };
-
-        // Display as readable formatted JSON on the browser screen
-        return res.send(`<pre>${JSON.stringify(payload, null, 2)}</pre>`);
+        });
     } catch (e) {
-        return res.status(500).send(e.message);
+        return res.status(500).json({ error: e.message });
     }
-}); // updated Aug. 19, 2026
+});
 
-function escapeHtml(text) {
-    return String(text)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-}
-
-// ── Webhook verification ──────────────────────────────────────────────────────
+// ── Webhook verification (Meta GET challenge) ─────────────────────────────────
 app.get("/webhook", (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
@@ -102,9 +128,8 @@ app.get("/webhook", (req, res) => {
     }
 });
 
-// // ── Receive messages - 08/01/2026
-const crypto = require("crypto");  // at top of file
-app.post("/webhook", async (req, res) => {
+// ── Receive messages (Meta POST webhook) ──────────────────────────────────────
+app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) => {
     if (req.body.object !== "page") {
         return res.sendStatus(404);
     }
@@ -143,7 +168,7 @@ app.post("/webhook", async (req, res) => {
     }
 });
 
-// generate AI response 08/01/2026 udpate
+// ── Generate AI response with conversation context ────────────────────────────
 async function generateAiResponse(userMessage, senderPSID) {
     try {
         // Get last 10 messages from this user
@@ -164,8 +189,6 @@ async function generateAiResponse(userMessage, senderPSID) {
         const result = await genAI.models.generateContent({
             model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
             contents: `${contextPrompt}\n${userMessage}`,
-            // // 08/01/2026
-            // contents: userMessage,
             config: { systemInstruction: SYSTEM_PROMPT }
         });
         const reply = result.text;
@@ -208,7 +231,7 @@ async function generateAiResponse(userMessage, senderPSID) {
             throw groqError;
         }
     }
-};
+}
 
 // ── Send reply via Messenger ──────────────────────────────────────────────────
 async function sendMessage(senderPSID, text) {
@@ -228,15 +251,9 @@ async function sendMessage(senderPSID, text) {
     }
 }
 
-// ── API: Reset entire database - 07/29/2026
-app.post("/api/reset-database", async (req, res) => {
+// ── API: Reset entire database ────────────────────────────────────────────────
+app.post("/api/reset-database", requireApiKey, async (req, res) => {
     try {
-        const apiKey = req.headers["x-api-key"];
-        if (apiKey !== process.env.INTERNAL_API_KEY) {
-            return res.status(403).json({ error: "Unauthorized - Invalid API key" });
-        }
-
-        // Delete all conversations
         const result = await Conversation.deleteMany({});
 
         console.log(`🗑️  Database reset! Deleted ${result.deletedCount} documents`);
@@ -249,15 +266,9 @@ app.post("/api/reset-database", async (req, res) => {
     }
 });
 
-// API enpoint for NLP HTTP request 08/01/2026
-// ── API: Get full conversation history for a user 
-app.get("/api/user-history/:senderPSID", async (req, res) => {
+// ── API: Get full conversation history for a user ─────────────────────────────
+app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
     try {
-        const apiKey = req.headers["x-api-key"];
-        if (apiKey !== process.env.INTERNAL_API_KEY) {
-            return res.status(403).json({ error: "Unauthorized" });
-        }
-
         const { senderPSID } = req.params;
         const { limit = 50 } = req.query;
 
@@ -266,15 +277,18 @@ app.get("/api/user-history/:senderPSID", async (req, res) => {
             .limit(parseInt(limit));
 
         // Format for NLP context
-        const formattedHistory = history.map(msg => ({
-            role: "user",
-            content: msg.userMessage,
-            timestamp: msg.timestamp
-        }, {
-            role: "assistant",
-            content: msg.aiReply,
-            timestamp: msg.timestamp
-        })).flat();
+        const formattedHistory = history.flatMap(msg => [
+            {
+                role: "user",
+                content: msg.userMessage,
+                timestamp: msg.timestamp
+            },
+            {
+                role: "assistant",
+                content: msg.aiReply,
+                timestamp: msg.timestamp
+            }
+        ]);
 
         res.json({
             senderPSID,
@@ -288,10 +302,10 @@ app.get("/api/user-history/:senderPSID", async (req, res) => {
 
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-    console.log(`🚀 Server running official url of your backend`);
-    console.log(`📊 Dashboard    : add "/dashboard on your url" `);
-    console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL})`);
-    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL})`);
-    console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN}`);
-    console.log(`📰 FB Scraper   : hourly cron active (FB_PAGE_ID: ${process.env.FB_PAGE_ID || 'NOT SET'})`);
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
+    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "llama-3.3-70b-versatile"})`);
+    console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN ? "CONFIGURED" : "NOT SET"}`);
+    console.log(`🛡️  App secret   : ${process.env.APP_SECRET ? "CONFIGURED" : "NOT SET (Recommended for webhook verification)"}`);
+    console.log(`📰 FB Scraper   : active (FB_PAGE_ID: ${process.env.FB_PAGE_ID || 'NOT SET'})`);
 });
