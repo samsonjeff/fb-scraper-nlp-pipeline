@@ -4,6 +4,9 @@ fb-scraper-nlp-pipeline is a unified Express.js service hosted on Render that se
 
 All data is structured and saved within a single PostgreSQL database powered by **Supabase**.
 
+> [!NOTE]
+> **Development & Security Notice:** This project was developed using **Google Antigravity IDE**. Portions of the codebase undergo manual inspection and validation prior to deployment. You are welcome to inspect, audit, or review the code for your personal verification or security purposes.
+
 ---
 
 ## 📋 Active Modules
