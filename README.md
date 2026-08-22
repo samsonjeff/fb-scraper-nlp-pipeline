@@ -1,47 +1,106 @@
 # fb-scraper-nlp-pipeline
 
-fb-scraper-nlp-pipeline is a unified Express.js service hosted on Render that serves as the data collection and processing engine for the Talisay, Batangas Incident System. It handles automated emergency messaging via Facebook Messenger and pulls public page activity via the Meta Graph API to log local incidents (such as floods, fires, landslides, etc.) in real time.
+> A unified Express.js service hosted on Render that serves as the data collection and processing engine for the Talisay, Batangas Incident System.
 
-All data is structured and saved within a single PostgreSQL database powered by **Supabase**.
+![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express.js-000000?style=for-the-badge&logo=express&logoColor=white)
+![Supabase](https://img.shields.io/badge/Supabase-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)
+![Google Gemini](https://img.shields.io/badge/Google%20Gemini-8E75B2?style=for-the-badge&logo=googlegemini&logoColor=white)
+![Meta Graph API](https://img.shields.io/badge/Meta%20Graph%20API-0467DF?style=for-the-badge&logo=meta&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+
+---
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Development & Security Notice](#development--security-notice)
+- [Active Modules & Features](#active-modules--features)
+- [Scope: Talisay Batangas Barangays](#scope-talisay-batangas-barangays)
+- [Tech Stack](#tech-stack)
+- [Security & Credential Protection](#security--credential-protection)
+- [Environment Configuration](#environment-configuration)
+- [Database Schema (Supabase SQL)](#database-schema-supabase-sql)
+- [API Endpoints](#api-endpoints)
+- [Installation & Running Locally](#installation--running-locally)
+- [License](#license)
+
+---
+
+## Overview
+
+**fb-scraper-nlp-pipeline** is a production-ready backend pipeline designed for emergency and community incident monitoring in **Talisay, Batangas**. 
+
+The system operates two primary workflows:
+1. **Automated Emergency Messaging**: Handles incoming Facebook Messenger queries with AI-powered replies (Gemini with Groq fallback), extracting reported barangay locations and emergency details.
+2. **Public Page Activity Scraping**: Periodically scrapes public Facebook Page posts and comments using Meta Graph API, parsing texts for incident keywords and mapping them to official barangays in real time.
+
+All structured data is persisted in a centralized **Supabase (PostgreSQL)** database.
+
+---
 
 > [!NOTE]
-> **Development & Security Notice:** This project was developed using **Google Antigravity IDE**. Portions of the codebase undergo manual inspection and validation prior to deployment. You are welcome to inspect, audit, or review the code for your personal verification or security purposes.
+> ### Development & Security Notice
+> This project was developed using **Google Antigravity IDE**. Portions of the codebase undergo manual inspection and validation prior to deployment. You are welcome to inspect, audit, or review the code for your personal verification or security purposes.
 
 ---
 
-## 📋 Active Modules
+## Active Modules & Features
 
 ### 1. Messenger Bot Module (AI Auto-Reply & Parsing)
-- Receives webhook events from the Facebook Page Messenger platform.
-- Automatically handles Tagalog/English responses using **Google Gemini** as the primary AI and **Groq (Llama 3)** as a reliable fallback.
-- Extracts Talisay barangay names and emergency keywords from user chats, logging conversations into Supabase.
+| Feature | Description |
+|---|---|
+| **Webhook Integration** | Real-time reception of Facebook Page Messenger webhooks |
+| **Dual AI Engine** | **Google Gemini** as primary LLM with **Groq (Llama 3)** as reliable fallback |
+| **Entity Extraction** | Automatic extraction of Talisay barangays and emergency keywords |
+| **Conversation Logging** | Full conversation history logged into `conversations` table |
 
 ### 2. FB Page Scraper Module (Public Activity Processing)
-- Periodically scrapes the target Facebook Page's posts and comments (default: every 60 seconds).
-- Parses captions and comment texts using a keyword matching engine.
-- Filters and assigns locations strictly matching the **21 official barangays of Talisay, Batangas** (otherwise defaults to `'Unknown'`).
-- Logs all posts and comments into Supabase tables (`fb_posts` and `fb_comments`).
-- Features a manual trigger API (`POST /scraper/run`) and a status API (`GET /scraper/status`).
+| Feature | Description |
+|---|---|
+| **Automated Scraping** | Periodic background scraping of posts and comments (default: 60s) |
+| **Keyword Parsing Engine** | Text parsing for incident types (floods, fires, landslides, etc.) |
+| **Strict Location Filtering** | Location matching strictly against the **21 official barangays of Talisay, Batangas** (defaults to `'Unknown'`) |
+| **Data Persistence** | Structured saving into `fb_posts` and `fb_comments` tables |
+| **Control APIs** | Manual trigger endpoint (`POST /scraper/run`) and status monitor (`GET /scraper/status`) |
 
 ---
 
-## 🗺️ Scope: Talisay Batangas Barangays
-All parsed locations are matched against the 21 official barangays:
+## Scope: Talisay Batangas Barangays
+
+All parsed locations are matched strictly against the 21 official barangays of Talisay, Batangas:
+
 > Aya, Balas, Banga, Buco, Caloocan, Leynes, Miranda, Poblacion Barangay 1, Poblacion Barangay 2, Poblacion Barangay 3, Poblacion Barangay 4, Poblacion Barangay 5, Poblacion Barangay 6, Poblacion Barangay 7, Poblacion Barangay 8, Quiling, Sampaloc, San Guillermo, Santa Maria, Tranca, Tumaway.
 
 ---
 
-## 🛠️ Tech Stack
-- **Runtime:** Node.js & Express.js
-- **Database:** Supabase (PostgreSQL)
-- **AI Models:** Gemini API (`@google/genai`), Groq SDK (`groq-sdk`)
-- **APIs:** Meta Graph API (v25.0)
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| **Runtime & Server** | Node.js, Express.js |
+| **Database** | Supabase (PostgreSQL with RLS) |
+| **AI Providers** | `@google/genai` (Gemini 2.5 Flash), `groq-sdk` (Llama 3.3 70B) |
+| **Social API** | Meta Graph API (v25.0) |
+| **Utilities** | `localtunnel`, `node-cron`, `helmet`, `express-rate-limit` |
 
 ---
 
-## ⚙️ Environment Variables (.env)
+## Security & Credential Protection
 
-Make sure the following environment variables are set in your local development environment and on Render:
+### Security Implementations
+| Layer | Implementation Details |
+|---|---|
+| **Environment Variables** | Secrets (`SUPABASE_SERVICE_KEY`, `PAGE_ACCESS_TOKEN`, API Keys) stored in `.env` |
+| **Git Exclusion** | `.env` explicitly excluded from version control via `.gitignore` |
+| **Endpoint Protection** | Internal scraper endpoints protected via `x-api-key` header verification |
+| **Rate Limiting & Security Headers** | Express application hardened with `helmet` and `express-rate-limit` |
+
+---
+
+## Environment Configuration
+
+Create a `.env` file in the root directory (refer to `.env.example`):
 
 ```env
 # ── Supabase ──────────────────────────────────────────────────────────────────
@@ -74,9 +133,9 @@ PORT=3000
 
 ---
 
-## 🗄️ Database Setup (Supabase SQL)
+## Database Schema (Supabase SQL)
 
-Run this SQL query inside your Supabase SQL Editor to initialize the required tables, row-level security (RLS) configurations, and indices:
+Run this script inside your Supabase SQL Editor to initialize required tables, policies, and indices:
 
 ```sql
 -- 1. Conversations table (Messenger Logs)
@@ -138,7 +197,7 @@ create index if not exists fb_comments_barangay_idx on fb_comments (barangay);
 
 ---
 
-## 📡 API Endpoints
+## API Endpoints
 
 | Method | Endpoint | Headers | Description |
 |---|---|---|---|
@@ -150,13 +209,30 @@ create index if not exists fb_comments_barangay_idx on fb_comments (barangay);
 
 ---
 
-## 🚀 Running Locally
+## Installation & Running Locally
 
-1. Install dependencies:
+1. **Clone the repository & install dependencies:**
    ```bash
+   git clone https://github.com/ShArafat58/ReplyGenie.git
+   cd fb-scraper-nlp-pipeline
    npm install
    ```
-2. Run the application:
+
+2. **Setup environment variables:**
+   Create a `.env` file based on `.env.example` and populate your credentials.
+
+3. **Start the application:**
    ```bash
    npm start
    ```
+
+4. **(Optional) Run localtunnel for webhook testing:**
+   ```bash
+   npm run tunnel
+   ```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
