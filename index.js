@@ -13,6 +13,9 @@ const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const app = express();
 
+// Trust reverse proxy headers (required for deployment platforms like Render/Heroku)
+app.set("trust proxy", 1);
+
 // ── Security Middleware ───────────────────────────────────────────────────────
 app.use(helmet());
 

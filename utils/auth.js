@@ -48,10 +48,11 @@ function requireApiKey(req, res, next) {
  * Uses process.env.APP_SECRET to compute HMAC-SHA256 of the raw body payload.
  */
 function verifyFacebookSignature(req, res, next) {
-    const appSecret = process.env.APP_SECRET;
+    let appSecret = process.env.APP_SECRET;
 
     // If APP_SECRET is configured, strictly enforce HMAC-SHA256 signature verification
     if (appSecret && appSecret.trim() !== "") {
+        appSecret = appSecret.trim().replace(/^["']|["']$/g, "");
         const signatureHeader = req.headers["x-hub-signature-256"];
 
         if (!signatureHeader) {
@@ -71,8 +72,10 @@ function verifyFacebookSignature(req, res, next) {
             .update(rawBody)
             .digest("hex");
 
-        if (!safeEqual(signatureHash, expectedHash)) {
+        const cleanSignature = signatureHash.trim().toLowerCase();
+        if (!safeEqual(cleanSignature, expectedHash)) {
             console.error("❌ Webhook Security: Signature mismatch for incoming webhook payload!");
+            console.error("💡 Hint: Ensure process.env.APP_SECRET on Render exactly matches your Meta App Secret from Meta Developer Dashboard (App Settings -> Basic -> App Secret).");
             return res.status(403).send("Invalid webhook signature");
         }
     } else {
