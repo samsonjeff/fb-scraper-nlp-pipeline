@@ -220,7 +220,7 @@ async function generateAiResponse(userMessage, senderPSID) {
 
             const completion = await groq.chat.completions.create({
                 messages,
-                model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+                model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
                 temperature: 0.7,
                 max_tokens: 300,
             });
@@ -307,7 +307,7 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
-    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "llama-3.1-8b-instant"})`);
+    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "openai/gpt-oss-120b"})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN ? "CONFIGURED" : "NOT SET"}`);
     console.log(`🛡️  App secret   : ${process.env.APP_SECRET ? "CONFIGURED" : "NOT SET (Recommended for webhook verification)"}`);
     console.log(`📰 FB Scraper   : active (FB_PAGE_ID: ${process.env.FB_PAGE_ID || 'NOT SET'})`);
