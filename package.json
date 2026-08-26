@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "tunnel": "node tunnel.js",
+    "diagnose": "node diagnose.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
