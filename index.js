@@ -151,7 +151,8 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                 // Fetch sender's real name & profile pic from Meta Graph API
                 const profile = await getUserProfile(senderPSID);
 
-                const { reply, provider } = await generateAiResponse(userMessage, senderPSID);
+                const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID);
+                const reply = stripMarkdown(rawReply);
                 const conversationId = crypto.randomUUID();
 
                 await Conversation.create({
@@ -239,6 +240,31 @@ async function generateAiResponse(userMessage, senderPSID) {
             throw groqError;
         }
     }
+}
+
+// ── Strip markdown formatting for plain-text channels (e.g. Messenger) ─────────
+function stripMarkdown(text) {
+    return text
+        // Remove bold+italic: ***text*** or ___text___
+        .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
+        .replace(/___(.+?)___/g, '$1')
+        // Remove bold: **text** or __text__
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/__(.+?)__/g, '$1')
+        // Remove italic: *text* or _text_
+        .replace(/\*(.+?)\*/g, '$1')
+        .replace(/_(.+?)_/g, '$1')
+        // Remove bullet points: lines starting with * or - or +
+        .replace(/^[\*\-\+]\s+/gm, '')
+        // Remove numbered list dots: "1. ", "2. " etc.
+        .replace(/^\d+\.\s+/gm, '')
+        // Remove heading hashes: ## Heading
+        .replace(/^#{1,6}\s+/gm, '')
+        // Remove inline code backticks
+        .replace(/`(.+?)`/g, '$1')
+        // Collapse multiple blank lines into one
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 // ── Send reply via Messenger ──────────────────────────────────────────────────
