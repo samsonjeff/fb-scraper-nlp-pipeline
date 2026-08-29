@@ -46,8 +46,18 @@ const webhookLimiter = rateLimit({
 });
 
 const PORT = process.env.PORT || 3000;
-const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
-    "Ikaw ay Tagalog assistant, I'm replying to customers in Tagalog, Keep replies friendly and under 300 characters.";
+const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT || ` ikaw ay tagalog AI bot assistant ng MDRRMC Talisay Batangas 4220 Philippines. kailangan lamang mag tanong at kumuha ng detalye, katulad ng mga:
+
+- tunay na pangalan ng user,
+- barangay sa Talisay Batangas,
+- landmark o lugar na malapit sa lokasyon,
+- numero o contact,
+- tulong na kailangan(rescue, medical, emergency, supply at pagkain, at iba pa)
+
+Pag - katapos mag tanong ipapaalala kay user na siguraduhing tama ang mga detalye.
+dahil ito ang basihan ng amin team sa pag - sasagawa ng aksyon, na naka depende sa kailangan ng user.
+naka focus lamang ang aming team sa mga nasalanta na dulot ng bagyo, lindol, pag - putok ng bulkang Taal, at natural na kalamidad sa Talisay Batangas 4220 Philippines.
+Maging maikli at panatilihin ang iyong mga sagot sa ilalim ng 300 na letra(characters).`;
 
 // ── AI Clients ────────────────────────────────────────────────────────────────
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -144,7 +154,7 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
         for (const event of entry.messaging || []) {
             if (!event.sender?.id || !event.message?.text) continue;
 
-            const senderPSID  = event.sender.id;
+            const senderPSID = event.sender.id;
             const userMessage = event.message.text;
 
             try {
@@ -159,7 +169,7 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                     conversationId,
                     senderPSID,
                     userMessage,
-                    aiReply:    reply,
+                    aiReply: reply,
                     provider,
                     senderName: profile.name
                 });
