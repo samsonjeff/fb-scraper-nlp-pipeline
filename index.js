@@ -236,7 +236,7 @@ async function generateAiResponse(userMessage, senderPSID) {
 
             const completion = await groq.chat.completions.create({
                 messages,
-                model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+                model: process.env.GROQ_MODEL || "qwen/qwen3.6-27b",
                 temperature: 0.7,
                 max_tokens: 300,
             });
