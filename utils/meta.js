@@ -21,7 +21,8 @@ async function getUserProfile(senderPSID, accessToken) {
         return profileCache.get(senderPSID);
     }
 
-    const token = accessToken || process.env.META_ACCESS_TOKEN;
+    // PSIDs require the Page Access Token of the connected page to resolve names
+    const token = accessToken || process.env.PAGE_ACCESS_TOKEN || process.env.META_ACCESS_TOKEN;
 
     try {
         const { data } = await axios.get(
