@@ -93,7 +93,7 @@ async function runDiagnostics() {
             throw new Error("GROQ_API_KEY environment variable is not set.");
         }
         const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-        const modelName = process.env.GROQ_MODEL || "llama-4-scout";
+        const modelName = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
         
         console.log(`🤖 Requesting Groq model: ${modelName}...`);
         const completion = await groq.chat.completions.create({
