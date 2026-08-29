@@ -46,8 +46,18 @@ const webhookLimiter = rateLimit({
 });
 
 const PORT = process.env.PORT || 3000;
-const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT ||
-    "Ikaw ay Tagalog assistant, I'm replying to customers in Tagalog, Keep replies friendly and under 300 characters.";
+const SYSTEM_PROMPT = process.env.BOT_SYSTEM_PROMPT || ` ikaw ay tagalog AI bot assistant ng MDRRMC Talisay Batangas 4220 Philippines. kailangan lamang mag tanong at kumuha ng detalye, katulad ng mga:
+
+- tunay na pangalan ng user,
+- barangay sa Talisay Batangas,
+- landmark o lugar na malapit sa lokasyon,
+- numero o contact,
+- tulong na kailangan(rescue, medical, emergency, supply at pagkain, at iba pa)
+
+Pag - katapos mag tanong ipapaalala kay user na siguraduhing tama ang mga detalye.
+dahil ito ang basihan ng amin team sa pag - sasagawa ng aksyon, na naka depende sa kailangan ng user.
+naka focus lamang ang aming team sa mga nasalanta na dulot ng bagyo, lindol, pag - putok ng bulkang Taal, at natural na kalamidad sa Talisay Batangas 4220 Philippines.
+Maging maikli at panatilihin ang iyong mga sagot sa ilalim ng 300 na letra(characters).`;
 
 // ── AI Clients ────────────────────────────────────────────────────────────────
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -144,21 +154,22 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
         for (const event of entry.messaging || []) {
             if (!event.sender?.id || !event.message?.text) continue;
 
-            const senderPSID  = event.sender.id;
+            const senderPSID = event.sender.id;
             const userMessage = event.message.text;
 
             try {
                 // Fetch sender's real name & profile pic from Meta Graph API
                 const profile = await getUserProfile(senderPSID);
 
-                const { reply, provider } = await generateAiResponse(userMessage, senderPSID);
+                const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID);
+                const reply = stripMarkdown(rawReply);
                 const conversationId = crypto.randomUUID();
 
                 await Conversation.create({
                     conversationId,
                     senderPSID,
                     userMessage,
-                    aiReply:    reply,
+                    aiReply: reply,
                     provider,
                     senderName: profile.name
                 });
@@ -176,69 +187,116 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
     }
 });
 
+// ── Gemini 429 Cooldown State ────────────────────────────────────────────────
+// When Gemini hits a quota limit (429), skip it for 60 seconds to avoid
+// wasting time on every message. After cooldown expires, try Gemini again.
+let geminiCooldownUntil = 0;
+const GEMINI_COOLDOWN_MS = 60 * 1000; // 60 seconds
+
 // ── Generate AI response with conversation context ────────────────────────────
 async function generateAiResponse(userMessage, senderPSID) {
-    try {
-        // Get last 10 messages from this user
-        const history = await Conversation.find({ senderPSID })
-            .sort({ timestamp: -1 })
-            .limit(10);
+    const now = Date.now();
+    const geminiOnCooldown = now < geminiCooldownUntil;
 
-        // Build context string
-        const contextMessages = history.reverse().map(h =>
-            `User: ${h.userMessage}\nBot: ${h.aiReply}`
-        ).join("\n---\n");
-
-        const contextPrompt = contextMessages
-            ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
-            : "First message from user. Respond to:";
-
-        console.log("🤖 Trying Gemini with conversation context...");
-        const result = await genAI.models.generateContent({
-            model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
-            contents: `${contextPrompt}\n${userMessage}`,
-            config: { systemInstruction: SYSTEM_PROMPT }
-        });
-        const reply = result.text;
-        if (!reply) throw new Error("Empty response from Gemini");
-        console.log("✅ Gemini responded.");
-        return { reply, provider: "gemini" };
-
-    } catch (geminiError) {
-        console.warn(`⚠️ Gemini failed: ${geminiError.message || geminiError}. Falling back to Groq...`);
-
+    if (geminiOnCooldown) {
+        const remainingSecs = Math.ceil((geminiCooldownUntil - now) / 1000);
+        console.warn(`⏩ Gemini on cooldown (${remainingSecs}s left). Going straight to Groq...`);
+    }
+    if (!geminiOnCooldown) {
         try {
-            // Same for Groq
+            // Get last 10 messages from this user
             const history = await Conversation.find({ senderPSID })
                 .sort({ timestamp: -1 })
                 .limit(10);
 
+            // Build context string
             const contextMessages = history.reverse().map(h =>
                 `User: ${h.userMessage}\nBot: ${h.aiReply}`
             ).join("\n---\n");
 
-            const messages = [
-                { role: "system", content: SYSTEM_PROMPT },
-                ...(contextMessages ? [{ role: "user", content: `Context:\n${contextMessages}` }] : []),
-                { role: "user", content: userMessage }
-            ];
+            const contextPrompt = contextMessages
+                ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
+                : "First message from user. Respond to:";
 
-            const completion = await groq.chat.completions.create({
-                messages,
-                model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
-                temperature: 0.7,
-                max_tokens: 300,
+            console.log("🤖 Trying Gemini with conversation context...");
+            const result = await genAI.models.generateContent({
+                model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
+                contents: `${contextPrompt}\n${userMessage}`,
+                config: { systemInstruction: SYSTEM_PROMPT }
             });
-            const reply = completion.choices[0]?.message?.content;
-            if (!reply) throw new Error("Empty response from Groq");
-            console.log("✅ Groq responded.");
-            return { reply, provider: "groq" };
+            const reply = result.text;
+            if (!reply) throw new Error("Empty response from Gemini");
+            console.log("✅ Gemini responded.");
+            return { reply, provider: "gemini" };
 
-        } catch (groqError) {
-            console.error(`❌ Groq failed: ${groqError.message}`);
-            throw groqError;
+        } catch (geminiError) {
+            const is429 = geminiError.message?.includes('429') || geminiError.status === 429;
+            if (is429) {
+                geminiCooldownUntil = Date.now() + GEMINI_COOLDOWN_MS;
+                console.warn(`⚠️ Gemini quota exceeded (429). Cooling down for 60s. Falling back to Groq...`);
+            } else {
+                console.warn(`⚠️ Gemini failed: ${geminiError.message || geminiError}. Falling back to Groq...`);
+            }
         }
     }
+
+    // ── Groq Fallback ────────────────────────────────────────────────────────
+    try {
+        // Same for Groq
+        const history = await Conversation.find({ senderPSID })
+            .sort({ timestamp: -1 })
+            .limit(10);
+
+        const contextMessages = history.reverse().map(h =>
+            `User: ${h.userMessage}\nBot: ${h.aiReply}`
+        ).join("\n---\n");
+
+        const messages = [
+            { role: "system", content: SYSTEM_PROMPT },
+            ...(contextMessages ? [{ role: "user", content: `Context:\n${contextMessages}` }] : []),
+            { role: "user", content: userMessage }
+        ];
+
+        const completion = await groq.chat.completions.create({
+            messages,
+            model: process.env.GROQ_MODEL || "qwen/qwen3.6-27b",
+            temperature: 0.7,
+            max_tokens: 300,
+        });
+        const reply = completion.choices[0]?.message?.content;
+        if (!reply) throw new Error("Empty response from Groq");
+        console.log("✅ Groq responded.");
+        return { reply, provider: "groq" };
+
+    } catch (groqError) {
+        console.error(`❌ Groq failed: ${groqError.message}`);
+        throw groqError;
+    }
+}
+
+// ── Strip markdown formatting for plain-text channels (e.g. Messenger) ─────────
+function stripMarkdown(text) {
+    return text
+        // Remove bold+italic: ***text*** or ___text___
+        .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
+        .replace(/___(.+?)___/g, '$1')
+        // Remove bold: **text** or __text__
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/__(.+?)__/g, '$1')
+        // Remove italic: *text* or _text_
+        .replace(/\*(.+?)\*/g, '$1')
+        .replace(/_(.+?)_/g, '$1')
+        // Remove bullet points: lines starting with * or - or +
+        .replace(/^[\*\-\+]\s+/gm, '')
+        // Remove numbered list dots: "1. ", "2. " etc.
+        .replace(/^\d+\.\s+/gm, '')
+        // Remove heading hashes: ## Heading
+        .replace(/^#{1,6}\s+/gm, '')
+        // Remove inline code backticks
+        .replace(/`(.+?)`/g, '$1')
+        // Collapse multiple blank lines into one
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 // ── Send reply via Messenger ──────────────────────────────────────────────────
@@ -312,7 +370,7 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
-    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "openai/gpt-oss-120b"})`);
+    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "llama-3.1-8b-instant"})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN ? "CONFIGURED" : "NOT SET"}`);
     console.log(`🛡️  App secret   : ${process.env.APP_SECRET ? "CONFIGURED" : "NOT SET (Recommended for webhook verification)"}`);
     console.log(`📰 FB Scraper   : active (FB_PAGE_ID: ${process.env.FB_PAGE_ID || 'NOT SET'})`);

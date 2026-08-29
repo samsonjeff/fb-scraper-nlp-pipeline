@@ -19,7 +19,7 @@ async function runDiagnostics() {
         "PAGE_ACCESS_TOKEN",
         "FB_PAGE_ID"
     ];
-    
+
     const missing = [];
     requiredEnv.forEach(env => {
         if (!process.env[env] || process.env[env].trim() === "") {
@@ -38,7 +38,7 @@ async function runDiagnostics() {
     console.log("2️⃣  Testing Supabase Connection & Schema...");
     try {
         const supabase = require("./supabase/client");
-        
+
         // Test query on conversations table
         const { data, error } = await supabase
             .from("conversations")
@@ -64,7 +64,7 @@ async function runDiagnostics() {
         }
         const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-        
+
         console.log(`🤖 Requesting Gemini model: ${modelName}...`);
         const result = await genAI.models.generateContent({
             model: modelName,
@@ -73,7 +73,7 @@ async function runDiagnostics() {
                 systemInstruction: "You are a test helper. Reply with exactly 'Pong'."
             }
         });
-        
+
         const text = result.text;
         if (!text || text.trim() === "") {
             throw new Error("Received empty response from Gemini API.");
@@ -93,8 +93,8 @@ async function runDiagnostics() {
             throw new Error("GROQ_API_KEY environment variable is not set.");
         }
         const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-        const modelName = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
-        
+        const modelName = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+
         console.log(`🤖 Requesting Groq model: ${modelName}...`);
         const completion = await groq.chat.completions.create({
             messages: [
@@ -124,7 +124,7 @@ async function runDiagnostics() {
         }
         const version = process.env.GRAPH_API_VERSION || "v25.0";
         const url = `https://graph.facebook.com/${version}/${process.env.FB_PAGE_ID}`;
-        
+
         const res = await axios.get(url, {
             params: {
                 fields: "id,name",
