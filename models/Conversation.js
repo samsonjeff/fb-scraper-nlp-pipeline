@@ -5,16 +5,26 @@ const TABLE = "conversations";
 const Conversation = {
     /**
      * Insert a new conversation row.
-     * @param {{ conversationId, senderPSID, userMessage, aiReply, provider }} data
+     * @param {{
+     *   conversationId: string,
+     *   senderPSID: string,
+     *   userMessage: string,
+     *   aiReply: string,
+     *   provider: string,
+     *   senderName?: string,
+     *   senderProfilePic?: string|null
+     * }} data
      */
     async create(data) {
         const row = {
-            conversation_id: data.conversationId,
-            sender_psid:     data.senderPSID,
-            user_message:    data.userMessage,
-            ai_reply:        data.aiReply,
-            provider:        data.provider,
-            timestamp:       new Date().toISOString()
+            conversation_id:    data.conversationId,
+            sender_psid:        data.senderPSID,
+            user_message:       data.userMessage,
+            ai_reply:           data.aiReply,
+            provider:           data.provider,
+            sender_name:        data.senderName        || "Unknown User",
+            sender_profile_pic: data.senderProfilePic  || null,
+            timestamp:          new Date().toISOString()
         };
 
         const { data: inserted, error } = await supabase
@@ -114,12 +124,14 @@ class ConversationQuery {
 
         // Normalize snake_case columns back to camelCase to match existing code
         return (data || []).map(row => ({
-            conversationId: row.conversation_id,
-            senderPSID:     row.sender_psid,
-            userMessage:    row.user_message,
-            aiReply:        row.ai_reply,
-            provider:       row.provider,
-            timestamp:      row.timestamp
+            conversationId:   row.conversation_id,
+            senderPSID:       row.sender_psid,
+            senderName:       row.sender_name        || "Unknown User",
+            senderProfilePic: row.sender_profile_pic || null,
+            userMessage:      row.user_message,
+            aiReply:          row.ai_reply,
+            provider:         row.provider,
+            timestamp:        row.timestamp
         }));
     }
 }

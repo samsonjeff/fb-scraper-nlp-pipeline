@@ -8,6 +8,7 @@ const Groq = require("groq-sdk");
 const Conversation = require("./models/Conversation");
 const { GoogleGenAI } = require("@google/genai");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
+const { getUserProfile } = require("./utils/meta");
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -143,10 +144,13 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
         for (const event of entry.messaging || []) {
             if (!event.sender?.id || !event.message?.text) continue;
 
-            const senderPSID = event.sender.id;
+            const senderPSID  = event.sender.id;
             const userMessage = event.message.text;
 
             try {
+                // Fetch sender's real name & profile pic from Meta Graph API
+                const profile = await getUserProfile(senderPSID);
+
                 const { reply, provider } = await generateAiResponse(userMessage, senderPSID);
                 const conversationId = crypto.randomUUID();
 
@@ -154,8 +158,10 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                     conversationId,
                     senderPSID,
                     userMessage,
-                    aiReply: reply,
-                    provider
+                    aiReply:          reply,
+                    provider,
+                    senderName:       profile.name,
+                    senderProfilePic: profile.profilePic
                 });
 
                 await sendMessage(senderPSID, reply);
