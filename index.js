@@ -242,31 +242,31 @@ async function generateAiResponse(userMessage, senderPSID) {
 
     // ── Groq Fallback ────────────────────────────────────────────────────────
     try {
-            // Same for Groq
-            const history = await Conversation.find({ senderPSID })
-                .sort({ timestamp: -1 })
-                .limit(10);
+        // Same for Groq
+        const history = await Conversation.find({ senderPSID })
+            .sort({ timestamp: -1 })
+            .limit(10);
 
-            const contextMessages = history.reverse().map(h =>
-                `User: ${h.userMessage}\nBot: ${h.aiReply}`
-            ).join("\n---\n");
+        const contextMessages = history.reverse().map(h =>
+            `User: ${h.userMessage}\nBot: ${h.aiReply}`
+        ).join("\n---\n");
 
-            const messages = [
-                { role: "system", content: SYSTEM_PROMPT },
-                ...(contextMessages ? [{ role: "user", content: `Context:\n${contextMessages}` }] : []),
-                { role: "user", content: userMessage }
-            ];
+        const messages = [
+            { role: "system", content: SYSTEM_PROMPT },
+            ...(contextMessages ? [{ role: "user", content: `Context:\n${contextMessages}` }] : []),
+            { role: "user", content: userMessage }
+        ];
 
-            const completion = await groq.chat.completions.create({
-                messages,
-                model: process.env.GROQ_MODEL || "qwen/qwen3.6-27b",
-                temperature: 0.7,
-                max_tokens: 300,
-            });
+        const completion = await groq.chat.completions.create({
+            messages,
+            model: process.env.GROQ_MODEL || "qwen/qwen3.6-27b",
+            temperature: 0.7,
+            max_tokens: 300,
+        });
         const reply = completion.choices[0]?.message?.content;
-            if (!reply) throw new Error("Empty response from Groq");
-            console.log("✅ Groq responded.");
-            return { reply, provider: "groq" };
+        if (!reply) throw new Error("Empty response from Groq");
+        console.log("✅ Groq responded.");
+        return { reply, provider: "groq" };
 
     } catch (groqError) {
         console.error(`❌ Groq failed: ${groqError.message}`);
