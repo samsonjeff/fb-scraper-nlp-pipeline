@@ -187,38 +187,61 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
     }
 });
 
+// ── Gemini 429 Cooldown State ────────────────────────────────────────────────
+// When Gemini hits a quota limit (429), skip it for 60 seconds to avoid
+// wasting time on every message. After cooldown expires, try Gemini again.
+let geminiCooldownUntil = 0;
+const GEMINI_COOLDOWN_MS = 60 * 1000; // 60 seconds
+
 // ── Generate AI response with conversation context ────────────────────────────
 async function generateAiResponse(userMessage, senderPSID) {
-    try {
-        // Get last 10 messages from this user
-        const history = await Conversation.find({ senderPSID })
-            .sort({ timestamp: -1 })
-            .limit(10);
+    const now = Date.now();
+    const geminiOnCooldown = now < geminiCooldownUntil;
 
-        // Build context string
-        const contextMessages = history.reverse().map(h =>
-            `User: ${h.userMessage}\nBot: ${h.aiReply}`
-        ).join("\n---\n");
-
-        const contextPrompt = contextMessages
-            ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
-            : "First message from user. Respond to:";
-
-        console.log("🤖 Trying Gemini with conversation context...");
-        const result = await genAI.models.generateContent({
-            model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
-            contents: `${contextPrompt}\n${userMessage}`,
-            config: { systemInstruction: SYSTEM_PROMPT }
-        });
-        const reply = result.text;
-        if (!reply) throw new Error("Empty response from Gemini");
-        console.log("✅ Gemini responded.");
-        return { reply, provider: "gemini" };
-
-    } catch (geminiError) {
-        console.warn(`⚠️ Gemini failed: ${geminiError.message || geminiError}. Falling back to Groq...`);
-
+    if (geminiOnCooldown) {
+        const remainingSecs = Math.ceil((geminiCooldownUntil - now) / 1000);
+        console.warn(`⏩ Gemini on cooldown (${remainingSecs}s left). Going straight to Groq...`);
+    }
+    if (!geminiOnCooldown) {
         try {
+            // Get last 10 messages from this user
+            const history = await Conversation.find({ senderPSID })
+                .sort({ timestamp: -1 })
+                .limit(10);
+
+            // Build context string
+            const contextMessages = history.reverse().map(h =>
+                `User: ${h.userMessage}\nBot: ${h.aiReply}`
+            ).join("\n---\n");
+
+            const contextPrompt = contextMessages
+                ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
+                : "First message from user. Respond to:";
+
+            console.log("🤖 Trying Gemini with conversation context...");
+            const result = await genAI.models.generateContent({
+                model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
+                contents: `${contextPrompt}\n${userMessage}`,
+                config: { systemInstruction: SYSTEM_PROMPT }
+            });
+            const reply = result.text;
+            if (!reply) throw new Error("Empty response from Gemini");
+            console.log("✅ Gemini responded.");
+            return { reply, provider: "gemini" };
+
+        } catch (geminiError) {
+            const is429 = geminiError.message?.includes('429') || geminiError.status === 429;
+            if (is429) {
+                geminiCooldownUntil = Date.now() + GEMINI_COOLDOWN_MS;
+                console.warn(`⚠️ Gemini quota exceeded (429). Cooling down for 60s. Falling back to Groq...`);
+            } else {
+                console.warn(`⚠️ Gemini failed: ${geminiError.message || geminiError}. Falling back to Groq...`);
+            }
+        }
+    }
+
+    // ── Groq Fallback ────────────────────────────────────────────────────────
+    try {
             // Same for Groq
             const history = await Conversation.find({ senderPSID })
                 .sort({ timestamp: -1 })
@@ -240,15 +263,14 @@ async function generateAiResponse(userMessage, senderPSID) {
                 temperature: 0.7,
                 max_tokens: 300,
             });
-            const reply = completion.choices[0]?.message?.content;
+        const reply = completion.choices[0]?.message?.content;
             if (!reply) throw new Error("Empty response from Groq");
             console.log("✅ Groq responded.");
             return { reply, provider: "groq" };
 
-        } catch (groqError) {
-            console.error(`❌ Groq failed: ${groqError.message}`);
-            throw groqError;
-        }
+    } catch (groqError) {
+        console.error(`❌ Groq failed: ${groqError.message}`);
+        throw groqError;
     }
 }
 
