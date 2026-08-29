@@ -8,6 +8,7 @@ const Groq = require("groq-sdk");
 const Conversation = require("./models/Conversation");
 const { GoogleGenAI } = require("@google/genai");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
+const { getUserProfile } = require("./utils/meta");
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -143,10 +144,13 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
         for (const event of entry.messaging || []) {
             if (!event.sender?.id || !event.message?.text) continue;
 
-            const senderPSID = event.sender.id;
+            const senderPSID  = event.sender.id;
             const userMessage = event.message.text;
 
             try {
+                // Fetch sender's real name & profile pic from Meta Graph API
+                const profile = await getUserProfile(senderPSID);
+
                 const { reply, provider } = await generateAiResponse(userMessage, senderPSID);
                 const conversationId = crypto.randomUUID();
 
@@ -154,8 +158,9 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                     conversationId,
                     senderPSID,
                     userMessage,
-                    aiReply: reply,
-                    provider
+                    aiReply:    reply,
+                    provider,
+                    senderName: profile.name
                 });
 
                 await sendMessage(senderPSID, reply);
@@ -220,7 +225,7 @@ async function generateAiResponse(userMessage, senderPSID) {
 
             const completion = await groq.chat.completions.create({
                 messages,
-                model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+                model: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
                 temperature: 0.7,
                 max_tokens: 300,
             });
@@ -307,7 +312,7 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
-    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "llama-3.3-70b-versatile"})`);
+    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "openai/gpt-oss-120b"})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN ? "CONFIGURED" : "NOT SET"}`);
     console.log(`🛡️  App secret   : ${process.env.APP_SECRET ? "CONFIGURED" : "NOT SET (Recommended for webhook verification)"}`);
     console.log(`📰 FB Scraper   : active (FB_PAGE_ID: ${process.env.FB_PAGE_ID || 'NOT SET'})`);

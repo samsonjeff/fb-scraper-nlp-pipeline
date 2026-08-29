@@ -51,9 +51,10 @@ All structured data is persisted in a centralized **Supabase (PostgreSQL)** data
 | Feature | Description |
 |---|---|
 | **Webhook Integration** | Real-time reception of Facebook Page Messenger webhooks |
+| **Profile Extraction** | Real-time resolution of sender real name via Meta Graph API with in-memory caching |
 | **Dual AI Engine** | **Google Gemini** as primary LLM with **Groq (Llama 3)** as reliable fallback |
 | **Entity Extraction** | Automatic extraction of Talisay barangays and emergency keywords |
-| **Conversation Logging** | Full conversation history logged into `conversations` table |
+| **Conversation Logging** | Full conversation history with sender real name logged into `conversations` table |
 
 ### 2. FB Page Scraper Module (Public Activity Processing)
 | Feature | Description |
@@ -110,6 +111,7 @@ SUPABASE_SERVICE_KEY=your_supabase_service_role_key
 
 # ── Facebook Messenger + Scraper ──────────────────────────────────────────────
 PAGE_ACCESS_TOKEN=your_meta_page_access_token
+META_ACCESS_TOKEN=your_permanent_meta_access_token
 VERIFY_TOKEN=your_webhook_verify_token
 FB_PAGE_ID=your_facebook_page_numeric_id
 GRAPH_API_VERSION=v25.0
@@ -143,12 +145,14 @@ create table if not exists conversations (
   id              bigint generated always as identity primary key,
   conversation_id text        not null unique,
   sender_psid     text        not null,
+  sender_name     text        default 'Unknown User',
   user_message    text        not null,
   ai_reply        text        not null,
   provider        text        not null default 'gemini',
   timestamp       timestamptz not null default now()
 );
 create index if not exists conversations_sender_psid_idx on conversations (sender_psid);
+create index if not exists conversations_sender_name_idx on conversations (sender_name);
 create index if not exists conversations_timestamp_idx   on conversations (timestamp desc);
 alter table public.conversations enable row level security;
 do $$ begin
@@ -213,7 +217,7 @@ create index if not exists fb_comments_barangay_idx on fb_comments (barangay);
 
 1. **Clone the repository & install dependencies:**
    ```bash
-   git clone https://github.com/ShArafat58/ReplyGenie.git
+   git clone https://github.com/samsonjeff/fb-scraper-nlp-pipeline.git
    cd fb-scraper-nlp-pipeline
    npm install
    ```
@@ -229,6 +233,11 @@ create index if not exists fb_comments_barangay_idx on fb_comments (barangay);
 4. **(Optional) Run localtunnel for webhook testing:**
    ```bash
    npm run tunnel
+   ```
+
+5. **(Optional) Backfill real sender names for historical conversations:**
+   ```bash
+   node backfill-names.js
    ```
 
 ---

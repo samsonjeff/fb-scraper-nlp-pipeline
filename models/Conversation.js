@@ -5,7 +5,14 @@ const TABLE = "conversations";
 const Conversation = {
     /**
      * Insert a new conversation row.
-     * @param {{ conversationId, senderPSID, userMessage, aiReply, provider }} data
+     * @param {{
+     *   conversationId: string,
+     *   senderPSID: string,
+     *   userMessage: string,
+     *   aiReply: string,
+     *   provider: string,
+     *   senderName?: string
+     * }} data
      */
     async create(data) {
         const row = {
@@ -14,6 +21,7 @@ const Conversation = {
             user_message:    data.userMessage,
             ai_reply:        data.aiReply,
             provider:        data.provider,
+            sender_name:     data.senderName || "Unknown User",
             timestamp:       new Date().toISOString()
         };
 
@@ -116,6 +124,7 @@ class ConversationQuery {
         return (data || []).map(row => ({
             conversationId: row.conversation_id,
             senderPSID:     row.sender_psid,
+            senderName:     row.sender_name || "Unknown User",
             userMessage:    row.user_message,
             aiReply:        row.ai_reply,
             provider:       row.provider,
