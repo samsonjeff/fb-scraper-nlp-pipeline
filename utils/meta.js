@@ -8,42 +8,37 @@ const GRAPH_VERSION = process.env.GRAPH_API_VERSION || "v25.0";
 const profileCache = new Map();
 
 /**
- * Fetch a Messenger user's real name and profile picture from the Meta Graph API.
+ * Fetch a Messenger user's real name from the Meta Graph API.
+ * Uses META_ACCESS_TOKEN (permanent long-lived token) from the environment.
  *
- * @param {string} senderPSID          - Page-Scoped User ID from the webhook event.
- * @param {string} [pageAccessToken]   - Optional override; defaults to PAGE_ACCESS_TOKEN env var.
- * @returns {Promise<{
- *   name: string,
- *   firstName: string,
- *   lastName: string,
- *   profilePic: string|null
- * }>}
+ * @param {string} senderPSID        - Page-Scoped User ID from the webhook event.
+ * @param {string} [accessToken]     - Optional override; defaults to META_ACCESS_TOKEN env var.
+ * @returns {Promise<{ name: string, firstName: string, lastName: string }>}
  */
-async function getUserProfile(senderPSID, pageAccessToken) {
+async function getUserProfile(senderPSID, accessToken) {
     // Return cached result if already fetched this session
     if (profileCache.has(senderPSID)) {
         return profileCache.get(senderPSID);
     }
 
-    const token = pageAccessToken || process.env.PAGE_ACCESS_TOKEN;
+    const token = accessToken || process.env.META_ACCESS_TOKEN;
 
     try {
         const { data } = await axios.get(
             `https://graph.facebook.com/${GRAPH_VERSION}/${senderPSID}`,
             {
                 params: {
-                    fields: "first_name,last_name,profile_pic",
+                    fields: "first_name,last_name",
                     access_token: token
                 }
             }
         );
 
         const profile = {
-            firstName:  data.first_name || "",
-            lastName:   data.last_name  || "",
-            name:       `${data.first_name || ""} ${data.last_name || ""}`.trim()
-                            || `User ${senderPSID.slice(-4)}`,
-            profilePic: data.profile_pic || null
+            firstName: data.first_name || "",
+            lastName:  data.last_name  || "",
+            name:      `${data.first_name || ""} ${data.last_name || ""}`.trim()
+                           || `User ${senderPSID.slice(-4)}`
         };
 
         profileCache.set(senderPSID, profile);

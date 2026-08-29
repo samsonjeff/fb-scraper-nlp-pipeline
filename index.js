@@ -158,10 +158,9 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                     conversationId,
                     senderPSID,
                     userMessage,
-                    aiReply:          reply,
+                    aiReply:    reply,
                     provider,
-                    senderName:       profile.name,
-                    senderProfilePic: profile.profilePic
+                    senderName: profile.name
                 });
 
                 await sendMessage(senderPSID, reply);
