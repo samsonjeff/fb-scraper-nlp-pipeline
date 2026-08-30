@@ -277,6 +277,8 @@ async function generateAiResponse(userMessage, senderPSID) {
 // ── Strip markdown formatting for plain-text channels (e.g. Messenger) ─────────
 function stripMarkdown(text) {
     return text
+        // Remove <think>...</think> blocks (reasoning/thinking model output)
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
         // Remove bold+italic: ***text*** or ___text___
         .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
         .replace(/___(.+?)___/g, '$1')
