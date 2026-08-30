@@ -5,7 +5,7 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const Groq = require("groq-sdk");
-const Conversation = require("./models/Conversation");
+const supabase = require("./supabase/client");
 const { GoogleGenAI } = require("@google/genai");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
 const { getUserProfile } = require("./utils/meta");
@@ -86,13 +86,17 @@ app.get("/", (req, res) => {
 // GET /api/debug/conversations (Requires x-api-key header)
 app.get("/api/debug/conversations", requireApiKey, async (req, res) => {
     try {
-        const supabase = require("./supabase/client");
         const { psid, limit = 100 } = req.query;
-        const filter = psid ? { senderPSID: psid } : {};
 
-        const conversations = await Conversation.find(filter)
-            .sort({ timestamp: -1 })
+        // Fetch bot conversations from Supabase
+        let convQuery = supabase
+            .from("conversations")
+            .select("*")
+            .order("timestamp", { ascending: false })
             .limit(parseInt(limit));
+
+        if (psid) convQuery = convQuery.eq("sender_psid", psid);
+        const { data: conversations } = await convQuery;
 
         // Fetch scraped posts
         const { data: posts } = await supabase
@@ -111,8 +115,8 @@ app.get("/api/debug/conversations", requireApiKey, async (req, res) => {
         return res.json({
             success: true,
             bot_conversations: {
-                total: conversations.length,
-                data: conversations
+                total: (conversations || []).length,
+                data: conversations || []
             },
             scraped_posts: {
                 total: (posts || []).length,
@@ -127,6 +131,7 @@ app.get("/api/debug/conversations", requireApiKey, async (req, res) => {
         return res.status(500).json({ error: e.message });
     }
 });
+
 
 // ── Webhook verification (Meta GET challenge) ─────────────────────────────────
 app.get("/webhook", (req, res) => {
@@ -165,14 +170,20 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                 const reply = stripMarkdown(rawReply);
                 const conversationId = crypto.randomUUID();
 
-                await Conversation.create({
-                    conversationId,
-                    senderPSID,
-                    userMessage,
-                    aiReply: reply,
-                    provider,
-                    senderName: profile.name
-                });
+                const { error: insertError } = await supabase
+                    .from("conversations")
+                    .insert({
+                        conversation_id: conversationId,
+                        sender_psid: senderPSID,
+                        user_message: userMessage,
+                        ai_reply: reply,
+                        provider,
+                        sender_name: profile.name || "Unknown User"
+                    });
+
+                if (insertError) {
+                    console.error("❌ Supabase insert error:", insertError.message);
+                }
 
                 await sendMessage(senderPSID, reply);
             } catch (err) {
@@ -205,13 +216,16 @@ async function generateAiResponse(userMessage, senderPSID) {
     if (!geminiOnCooldown) {
         try {
             // Get last 10 messages from this user
-            const history = await Conversation.find({ senderPSID })
-                .sort({ timestamp: -1 })
+            const { data: history } = await supabase
+                .from("conversations")
+                .select("user_message, ai_reply")
+                .eq("sender_psid", senderPSID)
+                .order("timestamp", { ascending: false })
                 .limit(10);
 
             // Build context string
-            const contextMessages = history.reverse().map(h =>
-                `User: ${h.userMessage}\nBot: ${h.aiReply}`
+            const contextMessages = (history || []).reverse().map(h =>
+                `User: ${h.user_message}\nBot: ${h.ai_reply}`
             ).join("\n---\n");
 
             const contextPrompt = contextMessages
@@ -243,12 +257,15 @@ async function generateAiResponse(userMessage, senderPSID) {
     // ── Groq Fallback ────────────────────────────────────────────────────────
     try {
         // Same for Groq
-        const history = await Conversation.find({ senderPSID })
-            .sort({ timestamp: -1 })
+        const { data: history } = await supabase
+            .from("conversations")
+            .select("user_message, ai_reply")
+            .eq("sender_psid", senderPSID)
+            .order("timestamp", { ascending: false })
             .limit(10);
 
-        const contextMessages = history.reverse().map(h =>
-            `User: ${h.userMessage}\nBot: ${h.aiReply}`
+        const contextMessages = (history || []).reverse().map(h =>
+            `User: ${h.user_message}\nBot: ${h.ai_reply}`
         ).join("\n---\n");
 
         const messages = [
@@ -322,12 +339,17 @@ async function sendMessage(senderPSID, text) {
 // ── API: Reset entire database ────────────────────────────────────────────────
 app.post("/api/reset-database", requireApiKey, async (req, res) => {
     try {
-        const result = await Conversation.deleteMany({});
+        const { error, count } = await supabase
+            .from("conversations")
+            .delete()
+            .neq("id", 0); // delete all rows
 
-        console.log(`🗑️  Database reset! Deleted ${result.deletedCount} documents`);
+        if (error) throw new Error(error.message);
+
+        console.log(`🗑️  Database reset! Deleted conversations from Supabase.`);
         res.json({
             success: true,
-            message: `Database reset successfully! Deleted ${result.deletedCount} conversations.`
+            message: `Database reset successfully! All conversations deleted.`
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -340,27 +362,32 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
         const { senderPSID } = req.params;
         const { limit = 50 } = req.query;
 
-        const history = await Conversation.find({ senderPSID })
-            .sort({ timestamp: 1 })  // oldest first
+        const { data: history, error } = await supabase
+            .from("conversations")
+            .select("*")
+            .eq("sender_psid", senderPSID)
+            .order("timestamp", { ascending: true })
             .limit(parseInt(limit));
 
+        if (error) throw new Error(error.message);
+
         // Format for NLP context
-        const formattedHistory = history.flatMap(msg => [
+        const formattedHistory = (history || []).flatMap(msg => [
             {
                 role: "user",
-                content: msg.userMessage,
+                content: msg.user_message,
                 timestamp: msg.timestamp
             },
             {
                 role: "assistant",
-                content: msg.aiReply,
+                content: msg.ai_reply,
                 timestamp: msg.timestamp
             }
         ]);
 
         res.json({
             senderPSID,
-            totalMessages: history.length,
+            totalMessages: (history || []).length,
             conversationHistory: formattedHistory
         });
     } catch (err) {
