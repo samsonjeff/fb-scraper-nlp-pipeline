@@ -95,9 +95,11 @@ async function runDiagnostics() {
                 validCount++;
             } catch (keyErr) {
                 const is429 = keyErr.message?.includes('429') || keyErr.status === 429;
-                if (is429) {
-                    // 429 means the key is valid but rate-limited — still counts as valid
-                    console.log(`   ✅ ${label} (${masked}) — valid (rate-limited, will recover)`);
+                const is503 = keyErr.message?.includes('503') || keyErr.status === 503;
+                if (is429 || is503) {
+                    // 429 / 503 means the key is valid, but Google server was temporarily busy
+                    const reason = is429 ? "rate-limited" : "high demand (503)";
+                    console.log(`   ✅ ${label} (${masked}) — valid (${reason}, will recover)`);
                     validCount++;
                 } else {
                     console.warn(`   ❌ ${label} (${masked}) — FAILED: ${keyErr.message}`);

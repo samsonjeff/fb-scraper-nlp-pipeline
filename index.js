@@ -236,9 +236,10 @@ async function generateAiResponse(userMessage, senderPSID) {
 
         } catch (geminiError) {
             const is429 = geminiError.message?.includes('429') || geminiError.status === 429;
-            if (is429) {
+            const is503 = geminiError.message?.includes('503') || geminiError.status === 503;
+            if (is429 || is503) {
                 geminiPool.markKeyCooldown(keyIndex);
-                console.warn(`⚠️ Gemini key hit 429. Trying next key or falling back to Groq...`);
+                console.warn(`⚠️ Gemini key hit ${is429 ? '429' : '503 (high demand)'}. Trying next key...`);
                 // Attempt once more with a different key
                 try {
                     const retry = geminiPool.getNextClient();
