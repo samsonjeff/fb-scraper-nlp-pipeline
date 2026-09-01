@@ -6,6 +6,7 @@ const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const Groq = require("groq-sdk");
 const supabase = require("./supabase/client");
+const Conversation = require("./models/Conversation");
 const { GoogleGenAI } = require("@google/genai");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
 const { getUserProfile } = require("./utils/meta");
@@ -168,22 +169,17 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
 
                 const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID);
                 const reply = stripMarkdown(rawReply);
-                const conversationId = crypto.randomUUID();
+                // Use Facebook message ID if available, otherwise generate a UUID
+                const conversationId = event.message?.mid || crypto.randomUUID();
 
-                const { error: insertError } = await supabase
-                    .from("conversations")
-                    .insert({
-                        conversation_id: conversationId,
-                        sender_psid: senderPSID,
-                        user_message: userMessage,
-                        ai_reply: reply,
-                        provider,
-                        sender_name: profile.name || "Unknown User"
-                    });
-
-                if (insertError) {
-                    console.error("❌ Supabase insert error:", insertError.message);
-                }
+                await Conversation.upsert({
+                    conversationId,
+                    senderPSID,
+                    userMessage,
+                    aiReply: reply,
+                    provider,
+                    senderName: profile.name || "Unknown User"
+                });
 
                 await sendMessage(senderPSID, reply);
             } catch (err) {

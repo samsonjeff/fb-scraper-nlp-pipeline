@@ -1,6 +1,7 @@
 const express = require("express");
 const axios = require("axios");
-const supabase = require("../supabase/client");
+const FbPost = require("../models/FbPost");
+const FbComment = require("../models/FbComment");
 const { detectBarangay, detectIncidentType } = require("../utils/barangays");
 const { requireApiKey } = require("../utils/auth");
 
@@ -43,21 +44,18 @@ async function runScraper() {
         const caption = post.message || "";
         const barangay = detectBarangay(caption);
 
-        // Upsert post (skip if already exists)
-        const { error: postErr } = await supabase
-            .from("fb_posts")
-            .upsert({
+        try {
+            await FbPost.upsert({
                 id: post.id,
                 caption,
-                post_date: post.created_time,
+                postDate: post.created_time,
                 barangay
-            }, { onConflict: "id" });
-
-        if (postErr) {
+            });
+            postsUpserted++;
+        } catch (postErr) {
             console.error(`❌ Scraper: Failed to upsert post ${post.id}:`, postErr.message);
             continue;
         }
-        postsUpserted++;
 
         // ── 2. Fetch comments for this post ──────────────────────────────────
         try {
@@ -82,24 +80,22 @@ async function runScraper() {
                 const commentDate = commentDt.toISOString().split("T")[0]; // YYYY-MM-DD
                 const commentTime = commentDt.toISOString().split("T")[1].split(".")[0]; // HH:MM:SS
 
-                const { error: commentErr } = await supabase
-                    .from("fb_comments")
-                    .upsert({
+                try {
+                    await FbComment.upsert({
                         id: comment.id,
-                        post_id: post.id,
-                        user_name: comment.from?.name || "Unknown",
-                        comment_text: commentText,
-                        comment_date: commentDate,
-                        comment_time: commentTime,
+                        postId: post.id,
+                        userName: comment.from?.name || "Unknown",
+                        commentText: commentText,
+                        commentDate: commentDate,
+                        commentTime: commentTime,
                         barangay: commentBarangay,
-                        incident_type: incidentType
-                    }, { onConflict: "id" });
-
-                if (commentErr) {
+                        incidentType: incidentType
+                    });
+                    commentsUpserted++;
+                } catch (commentErr) {
                     console.error(`❌ Scraper: Failed to upsert comment ${comment.id}:`, commentErr.message);
                     continue;
                 }
-                commentsUpserted++;
             }
         } catch (commentFetchErr) {
             // Some posts may not allow comment fetching — log and continue

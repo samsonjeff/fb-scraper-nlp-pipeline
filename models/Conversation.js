@@ -36,6 +36,38 @@ const Conversation = {
     },
 
     /**
+     * Upsert a conversation row (inserts or updates on conflict).
+     * @param {{
+     *   conversationId: string,
+     *   senderPSID: string,
+     *   userMessage: string,
+     *   aiReply: string,
+     *   provider: string,
+     *   senderName?: string
+     * }} data
+     */
+    async upsert(data) {
+        const row = {
+            conversation_id: data.conversationId,
+            sender_psid:     data.senderPSID,
+            user_message:    data.userMessage,
+            ai_reply:        data.aiReply,
+            provider:        data.provider,
+            sender_name:     data.senderName || "Unknown User",
+            timestamp:       new Date().toISOString()
+        };
+
+        const { data: upserted, error } = await supabase
+            .from(TABLE)
+            .upsert(row, { onConflict: "conversation_id" })
+            .select()
+            .single();
+
+        if (error) throw new Error(`Supabase upsert error: ${error.message}`);
+        return upserted;
+    },
+
+    /**
      * Find conversations with optional filter, sort, and limit.
      * Mimics Mongoose: Conversation.find(filter).sort({ timestamp: -1 }).limit(n)
      *
