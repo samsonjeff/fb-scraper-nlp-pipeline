@@ -70,6 +70,9 @@ async function runScraper() {
 
             const comments = commentsRes.data?.data || [];
 
+            // Track which comment IDs the API actually returned for this post
+            const apiCommentIds = new Set();
+
             for (const comment of comments) {
                 const commentText = comment.message || "";
                 const commentBarangay = detectBarangay(commentText);
@@ -91,12 +94,29 @@ async function runScraper() {
                         barangay: commentBarangay,
                         incidentType: incidentType
                     });
+                    apiCommentIds.add(comment.id);
                     commentsUpserted++;
                 } catch (commentErr) {
                     console.error(`❌ Scraper: Failed to upsert comment ${comment.id}:`, commentErr.message);
                     continue;
                 }
             }
+
+            // ── 3. Reconciliation — purge deleted comments ────────────────────
+            // Any comment ID stored in DB for this post but absent from the
+            // Graph API response means the user (or admin) deleted it on Facebook.
+            try {
+                const storedIds = await FbComment.findIdsByPostId(post.id);
+                const deletedIds = storedIds.filter(id => !apiCommentIds.has(id));
+
+                if (deletedIds.length > 0) {
+                    const pruned = await FbComment.deleteByIds(deletedIds);
+                    console.log(`🗑️  Scraper: Pruned ${pruned} deleted comment(s) for post ${post.id}`);
+                }
+            } catch (reconcileErr) {
+                console.warn(`⚠️ Scraper: Reconciliation failed for post ${post.id}:`, reconcileErr.message);
+            }
+
         } catch (commentFetchErr) {
             // Some posts may not allow comment fetching — log and continue
             console.warn(`⚠️ Scraper: Could not fetch comments for post ${post.id}:`, commentFetchErr.message);

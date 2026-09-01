@@ -55,14 +55,16 @@ All structured data is persisted in a centralized **Supabase (PostgreSQL)** data
 | **Dual AI Engine** | **Google Gemini** as primary LLM with **Groq (Llama 3)** as reliable fallback |
 | **Entity Extraction** | Automatic extraction of Talisay barangays and emergency keywords |
 | **Conversation Logging** | Full conversation history with sender real name logged into `conversations` table |
+| **Unsent Message Sync** | Periodic Graph API thread reconciliation detecting and pruning messages deleted/unsent by users |
 
 ### 2. FB Page Scraper Module (Public Activity Processing)
 | Feature | Description |
 |---|---|
-| **Automated Scraping** | Periodic background scraping of posts and comments (default: 60s) |
+| **Automated Scraping** | Periodic background scraping of posts and comments (default: 300s) |
+| **Comment Reconciliation** | Compares active Graph API comment IDs against DB to automatically prune deleted comments |
 | **Keyword Parsing Engine** | Text parsing for incident types (floods, fires, landslides, etc.) |
 | **Strict Location Filtering** | Location matching strictly against the **21 official barangays of Talisay, Batangas** (defaults to `'Unknown'`) |
-| **Data Persistence** | Structured saving into `fb_posts` and `fb_comments` tables |
+| **Data Persistence** | Structured saving into `fb_posts` and `fb_comments` tables with upsert handling for comment edits |
 | **Control APIs** | Manual trigger endpoint (`POST /scraper/run`) and status monitor (`GET /scraper/status`) |
 
 ---
@@ -113,10 +115,13 @@ SUPABASE_SERVICE_KEY=your_supabase_service_role_key
 PAGE_ACCESS_TOKEN=your_meta_page_access_token
 META_ACCESS_TOKEN=your_permanent_meta_access_token
 VERIFY_TOKEN=your_webhook_verify_token
+APP_SECRET=your_facebook_app_secret
 FB_PAGE_ID=your_facebook_page_numeric_id
 GRAPH_API_VERSION=v25.0
-# Scraper interval in seconds (60 = every 1 minute, 300 = every 5 minutes)
-SCRAPER_INTERVAL_SECONDS=60
+# Scraper interval in seconds (default: 300 = every 5 minutes)
+SCRAPER_INTERVAL_SECONDS=300
+# Messenger sync interval in seconds (default: 300 = every 5 minutes)
+MESSENGER_SYNC_INTERVAL_SECONDS=300
 
 # ── AI Providers ──────────────────────────────────────────────────────────────
 GEMINI_API_KEY=your_gemini_api_key
@@ -205,11 +210,14 @@ create index if not exists fb_comments_barangay_idx on fb_comments (barangay);
 
 | Method | Endpoint | Headers | Description |
 |---|---|---|---|
-| `GET` | `/` | None | Lists all saved conversations, posts, and comments as structured JSON |
-| `GET` | `/webhook` | URL Queries | Facebook App Webhook Verification |
-| `POST` | `/webhook` | None | Handles incoming Messenger chats |
-| `POST` | `/scraper/run` | `x-api-key: <INTERNAL_API_KEY>` | Manually triggers the Facebook Page scraper |
+| `GET` | `/` | None | Health check endpoint returning service status and timestamp |
+| `GET` | `/webhook` | URL Queries | Facebook App Webhook Verification (`hub.challenge`) |
+| `POST` | `/webhook` | `x-hub-signature-256` | Handles incoming Messenger chats with signature verification |
+| `POST` | `/scraper/run` | `x-api-key: <INTERNAL_API_KEY>` | Manually triggers the Facebook Page scraper and comment reconciliation |
 | `GET` | `/scraper/status` | None | Returns the status, last run time, and statistics of the scraper |
+| `GET` | `/api/debug/conversations` | `x-api-key: <INTERNAL_API_KEY>` | Fetches recent conversations, posts, and comments |
+| `GET` | `/api/user-history/:senderPSID` | `x-api-key: <INTERNAL_API_KEY>` | Fetches chat history formatted for NLP context for a given PSID |
+| `POST` | `/api/reset-database` | `x-api-key: <INTERNAL_API_KEY>` | Clears all conversation records from the database |
 
 ---
 

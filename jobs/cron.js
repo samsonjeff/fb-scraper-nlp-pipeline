@@ -1,12 +1,15 @@
 const { runScraper } = require("../routes/scraper");
+const { runMessengerSync } = require("./messengerSync");
 
 let isScraping = false;
+let isSyncing  = false;
 
 function startCronJobs() {
-    const intervalSec = parseInt(process.env.SCRAPER_INTERVAL_SECONDS || "300", 10);
-    const intervalMs = Math.max(intervalSec, 10) * 1000; // minimum 10 seconds safety guard
+    // ── FB Scraper ────────────────────────────────────────────────────────────
+    const scraperIntervalSec = parseInt(process.env.SCRAPER_INTERVAL_SECONDS || "300", 10);
+    const scraperIntervalMs  = Math.max(scraperIntervalSec, 10) * 1000; // min 10s
 
-    console.log(`📰 Cron: FB Scraper scheduled (running every ${intervalSec}s)`);
+    console.log(`📰 Cron: FB Scraper scheduled (running every ${scraperIntervalSec}s)`);
 
     setInterval(async () => {
         if (isScraping) {
@@ -23,7 +26,40 @@ function startCronJobs() {
         } finally {
             isScraping = false;
         }
-    }, intervalMs);
+    }, scraperIntervalMs);
+
+    // ── Messenger message sync ────────────────────────────────────────────────
+    // Polls the Graph API to detect messages the user deleted/unsent.
+    // Compares live thread MIDs against stored conversation_id values and
+    // removes any rows whose messages no longer exist in Messenger.
+    const syncIntervalSec = parseInt(process.env.MESSENGER_SYNC_INTERVAL_SECONDS || "300", 10);
+    const syncIntervalMs  = Math.max(syncIntervalSec, 30) * 1000; // min 30s
+
+    console.log(`💬 Cron: Messenger sync scheduled (running every ${syncIntervalSec}s)`);
+
+    // Run once immediately on startup to catch anything already deleted
+    runMessengerSync().catch(err =>
+        console.error("❌ Initial messenger sync error:", err.message)
+    );
+
+    setInterval(async () => {
+        if (isSyncing) {
+            console.log("⏳ MessengerSync: Previous sync still in progress, skipping...");
+            return;
+        }
+
+        isSyncing = true;
+        console.log("⏰ Cron: Running Messenger message sync...");
+        try {
+            await runMessengerSync();
+        } catch (err) {
+            console.error("❌ Cron messenger sync error:", err.message);
+        } finally {
+            isSyncing = false;
+        }
+    }, syncIntervalMs);
 }
 
 module.exports = { startCronJobs };
+
+
