@@ -7,11 +7,9 @@ const crypto = require("crypto");
 const Groq = require("groq-sdk");
 const supabase = require("./supabase/client");
 const Conversation = require("./models/Conversation");
-const { GoogleGenAI } = require("@google/genai");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
 const { getUserProfile } = require("./utils/meta");
-
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const geminiPool = require("./utils/geminiKeyPool");
 
 const app = express();
 
@@ -194,22 +192,19 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
     }
 });
 
-// ── Gemini 429 Cooldown State ────────────────────────────────────────────────
-// When Gemini hits a quota limit (429), skip it for 60 seconds to avoid
-// wasting time on every message. After cooldown expires, try Gemini again.
-let geminiCooldownUntil = 0;
-const GEMINI_COOLDOWN_MS = 60 * 1000; // 60 seconds
-
 // ── Generate AI response with conversation context ────────────────────────────
 async function generateAiResponse(userMessage, senderPSID) {
-    const now = Date.now();
-    const geminiOnCooldown = now < geminiCooldownUntil;
-
-    if (geminiOnCooldown) {
-        const remainingSecs = Math.ceil((geminiCooldownUntil - now) / 1000);
-        console.warn(`⏩ Gemini on cooldown (${remainingSecs}s left). Going straight to Groq...`);
+    // ── Try Gemini (multi-key pool) ──────────────────────────────────────────
+    let selectedKey = null;
+    try {
+        selectedKey = geminiPool.getNextClient();
+    } catch (poolErr) {
+        // All keys on cooldown
+        console.warn(`⏩ ${poolErr.message} Going straight to Groq...`);
     }
-    if (!geminiOnCooldown) {
+
+    if (selectedKey) {
+        const { client, keyIndex } = selectedKey;
         try {
             // Get last 10 messages from this user
             const { data: history } = await supabase
@@ -229,7 +224,7 @@ async function generateAiResponse(userMessage, senderPSID) {
                 : "First message from user. Respond to:";
 
             console.log("🤖 Trying Gemini with conversation context...");
-            const result = await genAI.models.generateContent({
+            const result = await client.models.generateContent({
                 model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
                 contents: `${contextPrompt}\n${userMessage}`,
                 config: { systemInstruction: SYSTEM_PROMPT }
@@ -242,8 +237,39 @@ async function generateAiResponse(userMessage, senderPSID) {
         } catch (geminiError) {
             const is429 = geminiError.message?.includes('429') || geminiError.status === 429;
             if (is429) {
-                geminiCooldownUntil = Date.now() + GEMINI_COOLDOWN_MS;
-                console.warn(`⚠️ Gemini quota exceeded (429). Cooling down for 60s. Falling back to Groq...`);
+                geminiPool.markKeyCooldown(keyIndex);
+                console.warn(`⚠️ Gemini key hit 429. Trying next key or falling back to Groq...`);
+                // Attempt once more with a different key
+                try {
+                    const retry = geminiPool.getNextClient();
+                    const { data: history } = await supabase
+                        .from("conversations")
+                        .select("user_message, ai_reply")
+                        .eq("sender_psid", senderPSID)
+                        .order("timestamp", { ascending: false })
+                        .limit(10);
+                    const contextMessages = (history || []).reverse().map(h =>
+                        `User: ${h.user_message}\nBot: ${h.ai_reply}`
+                    ).join("\n---\n");
+                    const contextPrompt = contextMessages
+                        ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
+                        : "First message from user. Respond to:";
+                    const retryResult = await retry.client.models.generateContent({
+                        model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
+                        contents: `${contextPrompt}\n${userMessage}`,
+                        config: { systemInstruction: SYSTEM_PROMPT }
+                    });
+                    const retryReply = retryResult.text;
+                    if (!retryReply) throw new Error("Empty response from Gemini (retry)");
+                    console.log("✅ Gemini responded (retry with next key).");
+                    return { reply: retryReply, provider: "gemini" };
+                } catch (retryErr) {
+                    const retryIs429 = retryErr.message?.includes('429') || retryErr.status === 429;
+                    if (retryIs429 && retryErr !== poolErr) {
+                        // If the retry key also got a keyIndex, cool it down too
+                    }
+                    console.warn(`⚠️ Gemini retry also failed. Falling back to Groq...`);
+                }
             } else {
                 console.warn(`⚠️ Gemini failed: ${geminiError.message || geminiError}. Falling back to Groq...`);
             }
@@ -394,7 +420,8 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
+    const poolStatus = geminiPool.getPoolStatus();
+    console.log(`🤖 Primary AI   : Gemini (${poolStatus.totalKeys} keys, model: ${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
     console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "llama-3.1-8b-instant"})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN ? "CONFIGURED" : "NOT SET"}`);
     console.log(`🛡️  App secret   : ${process.env.APP_SECRET ? "CONFIGURED" : "NOT SET (Recommended for webhook verification)"}`);

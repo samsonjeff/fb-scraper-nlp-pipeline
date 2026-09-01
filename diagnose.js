@@ -15,7 +15,6 @@ async function runDiagnostics() {
     const requiredEnv = [
         "SUPABASE_URL",
         "SUPABASE_SERVICE_KEY",
-        "GEMINI_API_KEY",
         "PAGE_ACCESS_TOKEN",
         "FB_PAGE_ID"
     ];
@@ -26,6 +25,11 @@ async function runDiagnostics() {
             missing.push(env);
         }
     });
+
+    // Gemini keys: accept either GEMINI_API_KEYS or legacy GEMINI_API_KEY
+    if (!process.env.GEMINI_API_KEYS && !process.env.GEMINI_API_KEY) {
+        missing.push("GEMINI_API_KEYS (or GEMINI_API_KEY)");
+    }
 
     if (missing.length > 0) {
         console.warn(`⚠️  Missing Environment Variables: ${missing.join(", ")}`);
@@ -56,33 +60,62 @@ async function runDiagnostics() {
         console.error("💡 Schema SQL can be found in README.md under 'Database Schema'.\n");
     }
 
-    // ── 3. Test Gemini API ──────────────────────────────
-    console.log("3️⃣  Testing Gemini API...");
+    // ── 3. Test Gemini API Keys (all keys in pool) ──────────────────────────
+    console.log("3️⃣  Testing Gemini API Keys...");
     try {
-        if (!process.env.GEMINI_API_KEY) {
-            throw new Error("GEMINI_API_KEY environment variable is not set.");
+        const raw = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "";
+        const keys = raw.split(",").map(k => k.trim()).filter(Boolean);
+
+        if (keys.length === 0) {
+            throw new Error("No Gemini API keys found. Set GEMINI_API_KEYS or GEMINI_API_KEY.");
         }
-        const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+        console.log(`   Found ${keys.length} Gemini key(s). Validating each...`);
         const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+        let validCount = 0;
+        let invalidCount = 0;
 
-        console.log(`🤖 Requesting Gemini model: ${modelName}...`);
-        const result = await genAI.models.generateContent({
-            model: modelName,
-            contents: "Ping",
-            config: {
-                systemInstruction: "You are a test helper. Reply with exactly 'Pong'."
+        for (let i = 0; i < keys.length; i++) {
+            const label = `Key-${String(i + 1).padStart(2, "0")}`;
+            const masked = keys[i].slice(0, 6) + "..." + keys[i].slice(-4);
+            try {
+                const testClient = new GoogleGenAI({ apiKey: keys[i] });
+                const result = await testClient.models.generateContent({
+                    model: modelName,
+                    contents: "Ping",
+                    config: {
+                        systemInstruction: "You are a test helper. Reply with exactly 'Pong'."
+                    }
+                });
+                const text = result.text;
+                if (!text || text.trim() === "") {
+                    throw new Error("Empty response");
+                }
+                console.log(`   ✅ ${label} (${masked}) — OK`);
+                validCount++;
+            } catch (keyErr) {
+                const is429 = keyErr.message?.includes('429') || keyErr.status === 429;
+                if (is429) {
+                    // 429 means the key is valid but rate-limited — still counts as valid
+                    console.log(`   ✅ ${label} (${masked}) — valid (rate-limited, will recover)`);
+                    validCount++;
+                } else {
+                    console.warn(`   ❌ ${label} (${masked}) — FAILED: ${keyErr.message}`);
+                    invalidCount++;
+                }
             }
-        });
-
-        const text = result.text;
-        if (!text || text.trim() === "") {
-            throw new Error("Received empty response from Gemini API.");
         }
-        console.log(`✅ Gemini API responds correctly: "${text.trim()}"\n`);
+
+        console.log(`   Summary: ${validCount} valid, ${invalidCount} invalid out of ${keys.length} keys.`);
+        if (invalidCount > 0) {
+            hasErrors = true;
+            console.warn("   ⚠️  Some keys failed. Replace invalid keys in your .env file.");
+        }
+        console.log();
     } catch (err) {
         hasErrors = true;
         console.error("❌ Gemini API Test Failed:", err.message);
-        console.error("💡 Ensure GEMINI_API_KEY is valid and has not expired. Make sure the GEMINI_MODEL is correct.");
+        console.error("💡 Ensure GEMINI_API_KEYS is set with valid comma-separated keys.");
         console.error("💡 If you are getting a 'Model not found' error, try setting GEMINI_MODEL to 'gemini-2.5-flash' without the 'models/' prefix.\n");
     }
 
