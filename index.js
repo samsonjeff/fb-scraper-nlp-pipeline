@@ -13,6 +13,34 @@ const geminiPool = require("./utils/geminiKeyPool");
 
 const app = express();
 
+// ── Message Deduplication (Supabase-backed, multi-instance safe) ─────────────
+// Uses the `processed_messages` table (PRIMARY KEY on mid) as a distributed
+// lock.  If two instances race on the same mid, only one INSERT wins;
+// the other gets PG error 23505 (unique_violation) and skips processing.
+//
+// Table DDL (already created in Supabase):
+//   CREATE TABLE processed_messages (
+//       mid          TEXT PRIMARY KEY,
+//       processed_at TIMESTAMPTZ DEFAULT now()
+//   );
+
+/**
+ * Atomically claims a message ID.
+ * @returns {Promise<boolean>} true if this instance claimed it, false if already taken.
+ */
+async function tryClaimMessage(mid) {
+    const { error } = await supabase
+        .from("processed_messages")
+        .insert({ mid });
+
+    if (error?.code === "23505") return false; // duplicate — another instance beat us
+    if (error) {
+        // Non-dedup error (e.g. table missing): log and allow processing to continue
+        console.error("⚠️  Dedup insert error (allowing through):", error.message);
+    }
+    return true;
+}
+
 // Trust reverse proxy headers (required for deployment platforms like Render/Heroku)
 app.set("trust proxy", 1);
 
@@ -160,6 +188,16 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
 
             const senderPSID = event.sender.id;
             const userMessage = event.message.text;
+            const mid = event.message?.mid;
+
+            // ── Dedup: skip if another instance (or a retry) already claimed this mid ──
+            if (mid) {
+                const claimed = await tryClaimMessage(mid);
+                if (!claimed) {
+                    console.log(`⏭️  Skipping duplicate message ${mid} from ${senderPSID}`);
+                    continue;
+                }
+            }
 
             try {
                 // Fetch sender's real name & profile pic from Meta Graph API
