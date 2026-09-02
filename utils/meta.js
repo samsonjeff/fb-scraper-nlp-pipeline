@@ -83,34 +83,38 @@ async function getUserProfile(senderPSID, accessToken) {
         // Direct PSID lookup often returns "Unsupported get request" for users without App Review
     }
 
-    // 4. Fallback: Search participants via Page inbox conversations
+    // 4. Fallback: Search participants via Page inbox conversations (paginated)
     try {
         const pageId = process.env.FB_PAGE_ID || PAGE_ID;
-        const { data } = await axios.get(
-            `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/conversations`,
-            {
-                params: {
-                    fields: "participants",
-                    access_token: token
-                }
-            }
-        );
+        let url = `https://graph.facebook.com/${GRAPH_VERSION}/${pageId}/conversations`;
+        let params = { fields: "participants", access_token: token };
+        const MAX_PAGES = 5; // Safety limit — up to ~125 conversations
 
-        for (const convo of data.data || []) {
-            for (const p of convo.participants?.data || []) {
-                if (p.id === senderPSID && p.name) {
-                    const fullName = p.name;
-                    const parts = fullName.split(" ");
-                    const profile = {
-                        firstName: parts[0] || fullName,
-                        lastName: parts.slice(1).join(" "),
-                        name: fullName
-                    };
-                    profileCache.set(senderPSID, profile);
-                    console.log(`👤 Profile fetched (via Page conversations): ${profile.name} (PSID: ${senderPSID})`);
-                    return profile;
+        for (let page = 0; page < MAX_PAGES; page++) {
+            const { data } = await axios.get(url, { params });
+
+            for (const convo of data.data || []) {
+                for (const p of convo.participants?.data || []) {
+                    if (p.id === senderPSID && p.name) {
+                        const fullName = p.name;
+                        const parts = fullName.split(" ");
+                        const profile = {
+                            firstName: parts[0] || fullName,
+                            lastName: parts.slice(1).join(" "),
+                            name: fullName
+                        };
+                        profileCache.set(senderPSID, profile);
+                        console.log(`👤 Profile fetched (via Page conversations, page ${page + 1}): ${profile.name} (PSID: ${senderPSID})`);
+                        return profile;
+                    }
                 }
             }
+
+            // Follow pagination cursor if available
+            const nextUrl = data.paging?.next;
+            if (!nextUrl) break;
+            url = nextUrl;
+            params = {}; // next URL already includes all params
         }
     } catch (convoErr) {
         const reason = convoErr.response?.data?.error?.message || convoErr.message;
