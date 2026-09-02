@@ -232,11 +232,12 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
 
 // ── Generate AI response with conversation context ────────────────────────────
 async function generateAiResponse(userMessage, senderPSID, senderName) {
-    // Inject the user's Facebook name into the system prompt so the AI
-    // naturally addresses them by name in every reply without formal prefixes like "G." (Ginoo).
-    const personalizedPrompt = senderName
-        ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot, ngunit HUWAG maglagay ng anumang titulo o prefix tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms." (Halimbawa: sabihin lamang na "Magandang araw po, ${senderName}!").`
-        : SYSTEM_PROMPT;
+    // Check if we have a valid name (not null, not placeholder like "User 1234")
+    const hasValidName = senderName && !senderName.startsWith("User ") && senderName !== "Unknown User";
+
+    const personalizedPrompt = hasValidName
+        ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot nang may paggalang (halimbawa: "Magandang araw po, ${senderName}!"), ngunit HUWAG maglagay ng titulo o prefix tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms.". Huwag mo na siyang hingan ng pangalan dahil may record na tayo nito.`
+        : `${SYSTEM_PROMPT}\n\nWala pang record ng pangalan ang kausap mo sa system. Batiin lamang siya ng "Magandang araw po!" (HUWAG gumamit ng placeholder tulad ng "User", ID, o numero). Kasama sa mga hihingin mong detalye, siguraduhing magalang na hingin at itanong ang kanyang buong pangalan.`;
     // ── Try Gemini (multi-key pool) ──────────────────────────────────────────
     let selectedKey = null;
     try {
