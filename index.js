@@ -233,9 +233,9 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
 // ── Generate AI response with conversation context ────────────────────────────
 async function generateAiResponse(userMessage, senderPSID, senderName) {
     // Inject the user's Facebook name into the system prompt so the AI
-    // naturally addresses them by name in every reply.
+    // naturally addresses them by name in every reply without formal prefixes like "G." (Ginoo).
     const personalizedPrompt = senderName
-        ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang pangalan niya sa iyong mga sagot bilang pagbibigay galang.`
+        ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot, ngunit HUWAG maglagay ng anumang titulo o prefix tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms." (Halimbawa: sabihin lamang na "Magandang araw po, ${senderName}!").`
         : SYSTEM_PROMPT;
     // ── Try Gemini (multi-key pool) ──────────────────────────────────────────
     let selectedKey = null;
@@ -362,6 +362,8 @@ function stripMarkdown(text) {
     return text
         // Remove <think>...</think> blocks (reasoning/thinking model output)
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        // Remove formal prefixes like "G.", "Gng.", "Bb.", "Mr.", "Ms." before names
+        .replace(/\b(G\.|Gng\.|Bb\.|Mr\.|Ms\.)\s+/gi, '')
         // Remove bold+italic: ***text*** or ___text___
         .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
         .replace(/___(.+?)___/g, '$1')
