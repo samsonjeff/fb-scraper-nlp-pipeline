@@ -208,14 +208,33 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                 // Use Facebook message ID if available, otherwise generate a UUID
                 const conversationId = event.message?.mid || crypto.randomUUID();
 
+                // Determine the effective sender name to store
+                const effectiveName = (profile.name && !profile.name.startsWith("User "))
+                    ? profile.name
+                    : "Unknown User";
+
                 await Conversation.upsert({
                     conversationId,
                     senderPSID,
                     userMessage,
                     aiReply: reply,
                     provider,
-                    senderName: profile.name || "Unknown User"
+                    senderName: effectiveName
                 });
+
+                // If we resolved a real name, retroactively fix all stale placeholder rows
+                // for this PSID (handles server restarts where old rows still say "User XXXX")
+                if (profile.name && !profile.name.startsWith("User ")) {
+                    supabase
+                        .from("conversations")
+                        .update({ sender_name: profile.name })
+                        .eq("sender_psid", senderPSID)
+                        .or(`sender_name.is.null,sender_name.eq.Unknown User,sender_name.like.User %`)
+                        .then(({ error }) => {
+                            if (error) console.warn("⚠️ Failed to backfill stale sender_name:", error.message);
+                            else console.log(`🔄 Backfilled sender_name for PSID ${senderPSID} → "${profile.name}"`);
+                        });
+                }
 
                 await sendMessage(senderPSID, reply);
             } catch (err) {
