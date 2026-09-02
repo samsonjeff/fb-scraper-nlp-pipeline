@@ -203,7 +203,7 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                 // Fetch sender's real name & profile pic from Meta Graph API
                 const profile = await getUserProfile(senderPSID);
 
-                const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID);
+                const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID, profile.name);
                 const reply = stripMarkdown(rawReply);
                 // Use Facebook message ID if available, otherwise generate a UUID
                 const conversationId = event.message?.mid || crypto.randomUUID();
@@ -231,7 +231,12 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
 });
 
 // ── Generate AI response with conversation context ────────────────────────────
-async function generateAiResponse(userMessage, senderPSID) {
+async function generateAiResponse(userMessage, senderPSID, senderName) {
+    // Inject the user's Facebook name into the system prompt so the AI
+    // naturally addresses them by name in every reply.
+    const personalizedPrompt = senderName
+        ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang pangalan niya sa iyong mga sagot bilang pagbibigay galang.`
+        : SYSTEM_PROMPT;
     // ── Try Gemini (multi-key pool) ──────────────────────────────────────────
     let selectedKey = null;
     try {
@@ -265,7 +270,7 @@ async function generateAiResponse(userMessage, senderPSID) {
             const result = await client.models.generateContent({
                 model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
                 contents: `${contextPrompt}\n${userMessage}`,
-                config: { systemInstruction: SYSTEM_PROMPT }
+                config: { systemInstruction: personalizedPrompt }
             });
             const reply = result.text;
             if (!reply) throw new Error("Empty response from Gemini");
@@ -296,7 +301,7 @@ async function generateAiResponse(userMessage, senderPSID) {
                     const retryResult = await retry.client.models.generateContent({
                         model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
                         contents: `${contextPrompt}\n${userMessage}`,
-                        config: { systemInstruction: SYSTEM_PROMPT }
+                        config: { systemInstruction: personalizedPrompt }
                     });
                     const retryReply = retryResult.text;
                     if (!retryReply) throw new Error("Empty response from Gemini (retry)");
@@ -330,7 +335,7 @@ async function generateAiResponse(userMessage, senderPSID) {
         ).join("\n---\n");
 
         const messages = [
-            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: personalizedPrompt },
             ...(contextMessages ? [{ role: "user", content: `Context:\n${contextMessages}` }] : []),
             { role: "user", content: userMessage }
         ];
