@@ -1,5 +1,6 @@
 const { runScraper } = require("../routes/scraper");
 const { runMessengerSync } = require("./messengerSync");
+const supabase = require("../supabase/client");
 
 let isScraping = false;
 let isSyncing  = false;
@@ -58,6 +59,28 @@ function startCronJobs() {
             isSyncing = false;
         }
     }, syncIntervalMs);
+    // ── Dedup table cleanup ────────────────────────────────────────────────────
+    // Purges processed_messages rows older than 10 minutes every hour.
+    // Meta’s webhook retry window is ~60s, so 10 min is a very safe TTL.
+    const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // every 1 hour
+    const DEDUP_TTL_MINUTES    = 10;
+
+    console.log(`🧹 Cron: Dedup cleanup scheduled (runs every hour, purges >10 min old)`);
+
+    setInterval(async () => {
+        try {
+            const cutoff = new Date(Date.now() - DEDUP_TTL_MINUTES * 60 * 1000).toISOString();
+            const { error, count } = await supabase
+                .from("processed_messages")
+                .delete()
+                .lt("processed_at", cutoff);
+
+            if (error) throw error;
+            console.log(`🧹 Dedup cleanup: removed ${count ?? 0} stale entries.`);
+        } catch (err) {
+            console.error("❌ Dedup cleanup error:", err.message);
+        }
+    }, CLEANUP_INTERVAL_MS);
 }
 
 module.exports = { startCronJobs };

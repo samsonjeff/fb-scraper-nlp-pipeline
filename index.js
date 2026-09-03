@@ -7,13 +7,39 @@ const crypto = require("crypto");
 const Groq = require("groq-sdk");
 const supabase = require("./supabase/client");
 const Conversation = require("./models/Conversation");
-const { GoogleGenAI } = require("@google/genai");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
 const { getUserProfile } = require("./utils/meta");
-
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const geminiPool = require("./utils/geminiKeyPool");
 
 const app = express();
+
+// ── Message Deduplication (Supabase-backed, multi-instance safe) ─────────────
+// Uses the `processed_messages` table (PRIMARY KEY on mid) as a distributed
+// lock.  If two instances race on the same mid, only one INSERT wins;
+// the other gets PG error 23505 (unique_violation) and skips processing.
+//
+// Table DDL (already created in Supabase):
+//   CREATE TABLE processed_messages (
+//       mid          TEXT PRIMARY KEY,
+//       processed_at TIMESTAMPTZ DEFAULT now()
+//   );
+
+/**
+ * Atomically claims a message ID.
+ * @returns {Promise<boolean>} true if this instance claimed it, false if already taken.
+ */
+async function tryClaimMessage(mid) {
+    const { error } = await supabase
+        .from("processed_messages")
+        .insert({ mid });
+
+    if (error?.code === "23505") return false; // duplicate — another instance beat us
+    if (error) {
+        // Non-dedup error (e.g. table missing): log and allow processing to continue
+        console.error("⚠️  Dedup insert error (allowing through):", error.message);
+    }
+    return true;
+}
 
 // Trust reverse proxy headers (required for deployment platforms like Render/Heroku)
 app.set("trust proxy", 1);
@@ -162,15 +188,30 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
 
             const senderPSID = event.sender.id;
             const userMessage = event.message.text;
+            const mid = event.message?.mid;
+
+            // ── Dedup: skip if another instance (or a retry) already claimed this mid ──
+            if (mid) {
+                const claimed = await tryClaimMessage(mid);
+                if (!claimed) {
+                    console.log(`⏭️  Skipping duplicate message ${mid} from ${senderPSID}`);
+                    continue;
+                }
+            }
 
             try {
                 // Fetch sender's real name & profile pic from Meta Graph API
                 const profile = await getUserProfile(senderPSID);
 
-                const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID);
+                const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID, profile.name);
                 const reply = stripMarkdown(rawReply);
                 // Use Facebook message ID if available, otherwise generate a UUID
                 const conversationId = event.message?.mid || crypto.randomUUID();
+
+                // Determine the effective sender name to store
+                const effectiveName = (profile.name && !profile.name.startsWith("User "))
+                    ? profile.name
+                    : "Unknown User";
 
                 await Conversation.upsert({
                     conversationId,
@@ -178,8 +219,22 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                     userMessage,
                     aiReply: reply,
                     provider,
-                    senderName: profile.name || "Unknown User"
+                    senderName: effectiveName
                 });
+
+                // If we resolved a real name, retroactively fix all stale placeholder rows
+                // for this PSID (handles server restarts where old rows still say "User XXXX")
+                if (profile.name && !profile.name.startsWith("User ")) {
+                    supabase
+                        .from("conversations")
+                        .update({ sender_name: profile.name })
+                        .eq("sender_psid", senderPSID)
+                        .or(`sender_name.is.null,sender_name.eq.Unknown User,sender_name.like.User %`)
+                        .then(({ error }) => {
+                            if (error) console.warn("⚠️ Failed to backfill stale sender_name:", error.message);
+                            else console.log(`🔄 Backfilled sender_name for PSID ${senderPSID} → "${profile.name}"`);
+                        });
+                }
 
                 await sendMessage(senderPSID, reply);
             } catch (err) {
@@ -194,22 +249,25 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
     }
 });
 
-// ── Gemini 429 Cooldown State ────────────────────────────────────────────────
-// When Gemini hits a quota limit (429), skip it for 60 seconds to avoid
-// wasting time on every message. After cooldown expires, try Gemini again.
-let geminiCooldownUntil = 0;
-const GEMINI_COOLDOWN_MS = 60 * 1000; // 60 seconds
-
 // ── Generate AI response with conversation context ────────────────────────────
-async function generateAiResponse(userMessage, senderPSID) {
-    const now = Date.now();
-    const geminiOnCooldown = now < geminiCooldownUntil;
+async function generateAiResponse(userMessage, senderPSID, senderName) {
+    // Check if we have a valid name (not null, not placeholder like "User 1234")
+    const hasValidName = senderName && !senderName.startsWith("User ") && senderName !== "Unknown User";
 
-    if (geminiOnCooldown) {
-        const remainingSecs = Math.ceil((geminiCooldownUntil - now) / 1000);
-        console.warn(`⏩ Gemini on cooldown (${remainingSecs}s left). Going straight to Groq...`);
+    const personalizedPrompt = hasValidName
+        ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot nang may paggalang (halimbawa: "Magandang araw po, ${senderName}!"), ngunit HUWAG maglagay ng titulo o prefix tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms.". Huwag mo na siyang hingan ng pangalan dahil may record na tayo nito.`
+        : `${SYSTEM_PROMPT}\n\nWala pang record ng pangalan ang kausap mo sa system. Batiin lamang siya ng "Magandang araw po!" (HUWAG gumamit ng placeholder tulad ng "User", ID, o numero). Kasama sa mga hihingin mong detalye, siguraduhing magalang na hingin at itanong ang kanyang buong pangalan.`;
+    // ── Try Gemini (multi-key pool) ──────────────────────────────────────────
+    let selectedKey = null;
+    try {
+        selectedKey = geminiPool.getNextClient();
+    } catch (poolErr) {
+        // All keys on cooldown
+        console.warn(`⏩ ${poolErr.message} Going straight to Groq...`);
     }
-    if (!geminiOnCooldown) {
+
+    if (selectedKey) {
+        const { client, keyIndex } = selectedKey;
         try {
             // Get last 10 messages from this user
             const { data: history } = await supabase
@@ -229,10 +287,10 @@ async function generateAiResponse(userMessage, senderPSID) {
                 : "First message from user. Respond to:";
 
             console.log("🤖 Trying Gemini with conversation context...");
-            const result = await genAI.models.generateContent({
+            const result = await client.models.generateContent({
                 model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
                 contents: `${contextPrompt}\n${userMessage}`,
-                config: { systemInstruction: SYSTEM_PROMPT }
+                config: { systemInstruction: personalizedPrompt }
             });
             const reply = result.text;
             if (!reply) throw new Error("Empty response from Gemini");
@@ -241,9 +299,41 @@ async function generateAiResponse(userMessage, senderPSID) {
 
         } catch (geminiError) {
             const is429 = geminiError.message?.includes('429') || geminiError.status === 429;
-            if (is429) {
-                geminiCooldownUntil = Date.now() + GEMINI_COOLDOWN_MS;
-                console.warn(`⚠️ Gemini quota exceeded (429). Cooling down for 60s. Falling back to Groq...`);
+            const is503 = geminiError.message?.includes('503') || geminiError.status === 503;
+            if (is429 || is503) {
+                geminiPool.markKeyCooldown(keyIndex);
+                console.warn(`⚠️ Gemini key hit ${is429 ? '429' : '503 (high demand)'}. Trying next key...`);
+                // Attempt once more with a different key
+                try {
+                    const retry = geminiPool.getNextClient();
+                    const { data: history } = await supabase
+                        .from("conversations")
+                        .select("user_message, ai_reply")
+                        .eq("sender_psid", senderPSID)
+                        .order("timestamp", { ascending: false })
+                        .limit(10);
+                    const contextMessages = (history || []).reverse().map(h =>
+                        `User: ${h.user_message}\nBot: ${h.ai_reply}`
+                    ).join("\n---\n");
+                    const contextPrompt = contextMessages
+                        ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
+                        : "First message from user. Respond to:";
+                    const retryResult = await retry.client.models.generateContent({
+                        model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
+                        contents: `${contextPrompt}\n${userMessage}`,
+                        config: { systemInstruction: personalizedPrompt }
+                    });
+                    const retryReply = retryResult.text;
+                    if (!retryReply) throw new Error("Empty response from Gemini (retry)");
+                    console.log("✅ Gemini responded (retry with next key).");
+                    return { reply: retryReply, provider: "gemini" };
+                } catch (retryErr) {
+                    const retryIs429 = retryErr.message?.includes('429') || retryErr.status === 429;
+                    if (retryIs429 && retryErr !== poolErr) {
+                        // If the retry key also got a keyIndex, cool it down too
+                    }
+                    console.warn(`⚠️ Gemini retry also failed. Falling back to Groq...`);
+                }
             } else {
                 console.warn(`⚠️ Gemini failed: ${geminiError.message || geminiError}. Falling back to Groq...`);
             }
@@ -265,7 +355,7 @@ async function generateAiResponse(userMessage, senderPSID) {
         ).join("\n---\n");
 
         const messages = [
-            { role: "system", content: SYSTEM_PROMPT },
+            { role: "system", content: personalizedPrompt },
             ...(contextMessages ? [{ role: "user", content: `Context:\n${contextMessages}` }] : []),
             { role: "user", content: userMessage }
         ];
@@ -292,6 +382,8 @@ function stripMarkdown(text) {
     return text
         // Remove <think>...</think> blocks (reasoning/thinking model output)
         .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        // Remove formal prefixes like "G.", "Gng.", "Bb.", "Mr.", "Ms." before names
+        .replace(/\b(G\.|Gng\.|Bb\.|Mr\.|Ms\.)\s+/gi, '')
         // Remove bold+italic: ***text*** or ___text___
         .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
         .replace(/___(.+?)___/g, '$1')
@@ -394,7 +486,8 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
 // ── Start server ──────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🤖 Primary AI   : Gemini (${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
+    const poolStatus = geminiPool.getPoolStatus();
+    console.log(`🤖 Primary AI   : Gemini (${poolStatus.totalKeys} keys, model: ${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
     console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "llama-3.1-8b-instant"})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN ? "CONFIGURED" : "NOT SET"}`);
     console.log(`🛡️  App secret   : ${process.env.APP_SECRET ? "CONFIGURED" : "NOT SET (Recommended for webhook verification)"}`);

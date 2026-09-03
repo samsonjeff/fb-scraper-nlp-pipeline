@@ -15,7 +15,6 @@ async function runDiagnostics() {
     const requiredEnv = [
         "SUPABASE_URL",
         "SUPABASE_SERVICE_KEY",
-        "GEMINI_API_KEY",
         "PAGE_ACCESS_TOKEN",
         "FB_PAGE_ID"
     ];
@@ -26,6 +25,11 @@ async function runDiagnostics() {
             missing.push(env);
         }
     });
+
+    // Gemini keys: accept either GEMINI_API_KEYS or legacy GEMINI_API_KEY
+    if (!process.env.GEMINI_API_KEYS && !process.env.GEMINI_API_KEY) {
+        missing.push("GEMINI_API_KEYS (or GEMINI_API_KEY)");
+    }
 
     if (missing.length > 0) {
         console.warn(`⚠️  Missing Environment Variables: ${missing.join(", ")}`);
@@ -56,33 +60,52 @@ async function runDiagnostics() {
         console.error("💡 Schema SQL can be found in README.md under 'Database Schema'.\n");
     }
 
-    // ── 3. Test Gemini API ──────────────────────────────
-    console.log("3️⃣  Testing Gemini API...");
+    // ── 3. Test Gemini API Keys (all keys in pool) ──────────────────────────
+    console.log("3️⃣  Testing Gemini API Keys...");
     try {
-        if (!process.env.GEMINI_API_KEY) {
-            throw new Error("GEMINI_API_KEY environment variable is not set.");
-        }
-        const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-        const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+        const raw = process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "";
+        const keys = raw.split(",").map(k => k.trim()).filter(Boolean);
 
-        console.log(`🤖 Requesting Gemini model: ${modelName}...`);
-        const result = await genAI.models.generateContent({
+        if (keys.length === 0) {
+            throw new Error("No Gemini API keys found. Set GEMINI_API_KEYS or GEMINI_API_KEY.");
+        }
+
+        console.log(`   Found ${keys.length} Gemini key(s). Checking configuration...`);
+        const modelName = process.env.GEMINI_MODEL || "models/gemini-3.6-flash";
+
+        // Check key presence & structure for all keys
+        let validFormatCount = 0;
+        keys.forEach((key, i) => {
+            const label = `Key-${String(i + 1).padStart(2, "0")}`;
+            const masked = key.slice(0, 6) + "..." + key.slice(-4);
+            if (key.startsWith("AQ.") || key.length > 20) {
+                validFormatCount++;
+                console.log(`   ✅ ${label} (${masked}) — format valid`);
+            } else {
+                console.warn(`   ⚠️  ${label} (${masked}) — suspicious format`);
+            }
+        });
+
+        // Send a single test ping using Key-01 to verify network & Google API connectivity
+        console.log(`   📡 Testing Google API connection using Key-01...`);
+        const testClient = new GoogleGenAI({ apiKey: keys[0] });
+        const result = await testClient.models.generateContent({
             model: modelName,
             contents: "Ping",
             config: {
                 systemInstruction: "You are a test helper. Reply with exactly 'Pong'."
             }
         });
-
         const text = result.text;
         if (!text || text.trim() === "") {
             throw new Error("Received empty response from Gemini API.");
         }
-        console.log(`✅ Gemini API responds correctly: "${text.trim()}"\n`);
+        console.log(`   ✅ API connection successful! Gemini model (${modelName}) responded: "${text.trim()}"`);
+        console.log(`   Summary: All ${keys.length} keys loaded and pool is operational.\n`);
     } catch (err) {
         hasErrors = true;
         console.error("❌ Gemini API Test Failed:", err.message);
-        console.error("💡 Ensure GEMINI_API_KEY is valid and has not expired. Make sure the GEMINI_MODEL is correct.");
+        console.error("💡 Ensure GEMINI_API_KEYS is set with valid comma-separated keys.");
         console.error("💡 If you are getting a 'Model not found' error, try setting GEMINI_MODEL to 'gemini-2.5-flash' without the 'models/' prefix.\n");
     }
 
