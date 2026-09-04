@@ -1,6 +1,6 @@
 {
   "name": "fb-scraper-nlp-pipeline",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -11,16 +11,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ShArafat58/ReplyGenie.git"
+    "url": "git+https://github.com/samsonjeff/fb-scraper-nlp-pipeline.git"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/ShArafat58/ReplyGenie/issues"
+    "url": "https://github.com/samsonjeff/fb-scraper-nlp-pipeline/issues"
   },
-  "homepage": "https://github.com/ShArafat58/ReplyGenie#readme",
+  "homepage": "https://github.com/samsonjeff/fb-scraper-nlp-pipeline#readme",
   "dependencies": {
     "@google/genai": "^2.15.0",
     "@supabase/supabase-js": "^2.112.3",

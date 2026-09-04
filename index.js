@@ -85,7 +85,6 @@ dahil ito ang basihan ng amin team sa pag - sasagawa ng aksyon, na naka depende 
 naka focus lamang ang aming team sa mga nasalanta na dulot ng bagyo, lindol, pag - putok ng bulkang Taal, at natural na kalamidad sa Talisay Batangas 4220 Philippines.
 Maging maikli at panatilihin ang iyong mga sagot sa ilalim ng 300 na letra(characters).`;
 
-
 // ── Supabase Connection ───────────────────────────────────────────────────────
 console.log("🗄️  Supabase client initialised ✅");
 console.log(`   URL : ${process.env.SUPABASE_URL}`);

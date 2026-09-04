@@ -200,6 +200,19 @@ end $$;
 
 create index if not exists fb_comments_post_id_idx  on fb_comments (post_id);
 create index if not exists fb_comments_barangay_idx on fb_comments (barangay);
+
+-- 4. Processed Messages table (Webhook Deduplication)
+-- Prevents duplicate processing when multiple server instances receive the same message.
+create table if not exists processed_messages (
+  mid          text primary key,
+  processed_at timestamptz default now()
+);
+alter table processed_messages enable row level security;
+do $$ begin
+  create policy "service_role full access" on processed_messages
+    for all to service_role using (true) with check (true);
+exception when duplicate_object then null;
+end $$;
 ```
 
 ---
