@@ -4,7 +4,7 @@ const axios = require("axios");
 axios
     .post(
         "https://graph.facebook.com/v21.0/me/subscribed_apps",
-        { subscribed_fields: ["messages"] },
+        { subscribed_fields: ["messages", "message_echoes"] },
         { params: { access_token: process.env.PAGE_ACCESS_TOKEN } }
     )
     .then((res) => console.log("Subscribed:", res.data))

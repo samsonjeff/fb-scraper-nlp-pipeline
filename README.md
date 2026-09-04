@@ -259,7 +259,7 @@ When a human operator from the Facebook Page Inbox / Meta Business Suite wants t
 | Action | Commands (Operator Only) | Description |
 |---|---|---|
 | **Stop / Pause Bot** | `/pause` or `/stop` | Pauses AI replies for that specific user. User messages are still logged to the database, but no bot response is generated. |
-| **Resume / Continue Bot** | `/resume` or `/continue` | Re-enables automated AI responses for that specific user. |
+| **Resume / Continue Bot** | `/resume`, `/continue`, or `/start` | Re-enables automated AI responses for that specific user. |
 
 > [!TIP]
 > - **Operator-only:** Only the human operator typing in Facebook Page Inbox / Meta Business Suite can issue these commands. Users cannot pause/resume the bot themselves.

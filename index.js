@@ -13,7 +13,7 @@ const geminiPool = require("./utils/geminiKeyPool");
 
 // Human Handoff / Bot Pause commands
 const PAUSE_CMD_REGEX = /^\/(pause|stop)$/i;
-const RESUME_CMD_REGEX = /^\/(resume|continue)$/i;
+const RESUME_CMD_REGEX = /^\/(resume|continue|start)$/i;
 
 const app = express();
 
