@@ -6,14 +6,9 @@ const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const supabase = require("./supabase/client");
 const Conversation = require("./models/Conversation");
-const UserState = require("./models/UserState");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
 const { getUserProfile } = require("./utils/meta");
 const geminiPool = require("./utils/geminiKeyPool");
-
-// Human Handoff / Bot Pause commands
-const PAUSE_CMD_REGEX = /^\/(pause|stop)$/i;
-const RESUME_CMD_REGEX = /^\/(resume|continue|start)$/i;
 
 const app = express();
 
@@ -185,48 +180,13 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
 
     for (const entry of req.body.entry || []) {
         for (const event of entry.messaging || []) {
-            // ── 1. Operator Echo Detection (Human typing from Facebook Page Inbox) ──
-            if (event.message?.is_echo) {
-                const targetPSID = event.recipient?.id;
-                const echoText = (event.message?.text || "").trim();
-
-                if (targetPSID && echoText) {
-                    if (PAUSE_CMD_REGEX.test(echoText)) {
-                        console.log(`⏸️  Operator command in Page Inbox: PAUSE for user ${targetPSID}`);
-                        await UserState.setBotPaused(targetPSID, true);
-                        // Silent: Do not send automated messages when operator pauses
-                    } else if (RESUME_CMD_REGEX.test(echoText)) {
-                        console.log(`▶️  Operator command in Page Inbox: RESUME for user ${targetPSID}`);
-                        await UserState.setBotPaused(targetPSID, false);
-                        // Silent: Do not send automated messages when operator resumes
-                    } else {
-                        // ── Log operator's actual replies so Gemini has context when bot resumes ──
-                        const isPausedForUser = await UserState.isBotPaused(targetPSID);
-                        if (isPausedForUser) {
-                            const conversationId = event.message?.mid || crypto.randomUUID();
-                            await Conversation.upsert({
-                                conversationId,
-                                senderPSID: targetPSID,
-                                userMessage: "[OPERATOR]",
-                                aiReply: echoText,
-                                provider: "human_operator",
-                                senderName: "Page Operator"
-                            }).catch(err => console.warn("⚠️ Failed to log operator reply:", err.message));
-                            console.log(`💬 Logged operator reply for PSID ${targetPSID}: "${echoText.substring(0, 60)}..."`);
-                        }
-                    }
-                }
-                // Always skip echo messages from standard bot processing
-                continue;
-            }
-
             if (!event.sender?.id || !event.message?.text) continue;
 
             const senderPSID = event.sender.id;
-            const userMessage = event.message.text.trim();
+            const userMessage = event.message.text;
             const mid = event.message?.mid;
 
-            // ── 2. Message Deduplication ──
+            // ── Dedup: skip if another instance (or a retry) already claimed this mid ──
             if (mid) {
                 const claimed = await tryClaimMessage(mid);
                 if (!claimed) {
@@ -235,29 +195,6 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                 }
             }
 
-            // ── 3. Check if Bot is Paused for this User ──
-            const isPaused = await UserState.isBotPaused(senderPSID);
-            if (isPaused) {
-                console.log(`⏸️  [PAUSED] Bot is paused for PSID ${senderPSID}. Skipping AI reply to allow human operator.`);
-                const conversationId = mid || crypto.randomUUID();
-                const profile = await getUserProfile(senderPSID).catch(() => ({ name: "Unknown User" }));
-                const effectiveName = (profile.name && !profile.name.startsWith("User "))
-                    ? profile.name
-                    : "Unknown User";
-
-                await Conversation.upsert({
-                    conversationId,
-                    senderPSID,
-                    userMessage,
-                    aiReply: "[BOT PAUSED - HUMAN OPERATOR ACTIVE]",
-                    provider: "human_handoff",
-                    senderName: effectiveName
-                }).catch(err => console.warn("⚠️ Failed to log paused conversation:", err.message));
-
-                continue;
-            }
-
-            // ── 5. Standard AI processing ──
             try {
                 // Fetch sender's real name & profile pic from Meta Graph API
                 const profile = await getUserProfile(senderPSID);
@@ -265,7 +202,7 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                 const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID, profile.name);
                 const reply = stripMarkdown(rawReply);
                 // Use Facebook message ID if available, otherwise generate a UUID
-                const conversationId = mid || crypto.randomUUID();
+                const conversationId = event.message?.mid || crypto.randomUUID();
 
                 // Determine the effective sender name to store
                 const effectiveName = (profile.name && !profile.name.startsWith("User "))
@@ -313,67 +250,24 @@ async function generateAiResponse(userMessage, senderPSID, senderName) {
     // Check if we have a valid name (not null, not placeholder like "User 1234")
     const hasValidName = senderName && !senderName.startsWith("User ") && senderName !== "Unknown User";
 
-    const nameInstruction = hasValidName
-        ? `Ang pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot nang may paggalang (halimbawa: "Magandang araw po, ${senderName}!"), ngunit HUWAG maglagay ng titulo tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms.". Huwag mo na siyang hingan ng pangalan dahil may record na tayo nito.`
-        : `Wala pang record ng pangalan ang kausap mo sa system. Batiin lamang siya ng "Magandang araw po!" at magalang na hingin ang kanyang buong pangalan.`;
-
-    // ── Fetch conversation history (Past 30 minutes) ──
-    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-    let { data: history } = await supabase
+    const personalizedPrompt = hasValidName
+        ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot nang may paggalang (halimbawa: "Magandang araw po, ${senderName}!"), ngunit HUWAG maglagay ng titulo o prefix tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms.". Huwag mo na siyang hingan ng pangalan dahil may record na tayo nito.`
+        : `${SYSTEM_PROMPT}\n\nWala pang record ng pangalan ang kausap mo sa system. Batiin lamang siya ng "Magandang araw po!" (HUWAG gumamit ng placeholder tulad ng "User", ID, o numero). Kasama sa mga hihingin mong detalye, siguraduhing magalang na hingin at itanong ang kanyang buong pangalan.`;
+    // Fetch conversation history for context
+    const { data: history } = await supabase
         .from("conversations")
-        .select("user_message, ai_reply, provider, sender_name, timestamp")
+        .select("user_message, ai_reply")
         .eq("sender_psid", senderPSID)
-        .gte("timestamp", thirtyMinutesAgo)
-        .order("timestamp", { ascending: true });
+        .order("timestamp", { ascending: false })
+        .limit(10);
 
-    // Fallback: If no messages in the past 30 minutes, get the last 10 messages
-    if (!history || history.length === 0) {
-        const { data: fallbackHistory } = await supabase
-            .from("conversations")
-            .select("user_message, ai_reply, provider, sender_name, timestamp")
-            .eq("sender_psid", senderPSID)
-            .order("timestamp", { ascending: false })
-            .limit(10);
-        history = (fallbackHistory || []).reverse();
-    }
+    const contextMessages = (history || []).reverse().map(h =>
+        `User: ${h.user_message}\nBot: ${h.ai_reply}`
+    ).join("\n---\n");
 
-    // Build structured conversation log separating Citizen, Operator, and Bot
-    const contextLines = [];
-    for (const h of (history || [])) {
-        if (h.provider === "human_operator" || h.user_message === "[OPERATOR]") {
-            if (h.ai_reply) {
-                contextLines.push(`[Page Operator / Admin]: ${h.ai_reply}`);
-            }
-        } else {
-            if (h.user_message && h.user_message !== "[OPERATOR]") {
-                contextLines.push(`[Citizen - ${senderName || "User"}]: ${h.user_message}`);
-            }
-            if (h.ai_reply && !h.ai_reply.startsWith("[BOT PAUSED")) {
-                contextLines.push(`[Bot Assistant]: ${h.ai_reply}`);
-            }
-        }
-    }
-
-    const contextPrompt = contextLines.length > 0
-        ? `--- NAKARAANG PAG-UUSAP (Huling 30 Minuto) ---\n${contextLines.join("\n")}\n----------------------------------------------\nBagong mensahe ng Citizen:\n"${userMessage}"`
-        : `Unang mensahe mula sa Citizen:\n"${userMessage}"`;
-
-    const personalizedPrompt = `${SYSTEM_PROMPT}
-
-${nameInstruction}
-
---- MAHALAGANG TUNTUNIN SA PAGSUSURI NG NAKARAANG PAG-UUSAP (ANTI-DUPLICATION) ---
-1. Suriing mabuti ang NAKARAANG PAG-UUSAP (kasama ang mga sinabi ng Citizen at ng Page Operator):
-   - Pangalan ng Citizen
-   - Barangay sa Talisay Batangas (hal: Poblacion 5, Sampaloc, Tumaway, Banga, etc.)
-   - Landmark o Lugar (hal: malapit sa bakery, simbahan, poste, etc.)
-   - Contact Number (hal: 09375773334)
-   - Tulong na kailangan o Sitwasyon (hal: nagtumbahang mga poste, rescue, baha, etc.)
-2. MAHIGPIT NA PANUNTUNAN:
-   - HUWAG NANG MULING HINGIN ang mga impormasyon o detalyeng NAIBIGAY NA o nabanggit na sa nakaraang pag-uusap (kahit noong naka-pause ang bot o kausap ang operator).
-   - Kumpirmahin nang maikli at magalang ang mga natanggap nang detalye.
-   - Hingin LAMANG ang mga natitirang KULANG na impormasyon (kung may kulang pa).
-3. Kung kumpleto na ang lahat ng kinakailangang detalye (Barangay, Landmark, Contact, Tulong), ipaalam nang maikli na kumpleto na ang impormasyon at ipinapasa na sa rescue/response team ng Talisay MDRRMC.`;
+    const contextPrompt = contextMessages
+        ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
+        : "First message from user. Respond to:";
 
     // ── Gemini Multi-Key Pool ────────────────────────────────────────────────
     const maxAttempts = Math.min(geminiPool.pool.length, 3);
@@ -394,7 +288,7 @@ ${nameInstruction}
             console.log(`🤖 Requesting Gemini (attempt ${attempt + 1}/${maxAttempts})...`);
             const result = await client.models.generateContent({
                 model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
-                contents: `${contextPrompt}\n\nSagutin ang Citizen nang may pagsasaalang-alang sa mga naibigay nang detalye:`,
+                contents: `${contextPrompt}\n${userMessage}`,
                 config: { systemInstruction: personalizedPrompt }
             });
 
@@ -522,41 +416,6 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
             totalMessages: (history || []).length,
             conversationHistory: formattedHistory
         });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ── API: Check bot pause state for a user ─────────────────────────────────────
-app.get("/api/bot/state/:senderPSID", requireApiKey, async (req, res) => {
-    try {
-        const { senderPSID } = req.params;
-        const isPaused = await UserState.isBotPaused(senderPSID);
-        res.json({ senderPSID, botPaused: isPaused });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ── API: Manually pause bot for a user ────────────────────────────────────────
-app.post("/api/bot/pause", requireApiKey, async (req, res) => {
-    try {
-        const { senderPSID, senderName } = req.body;
-        if (!senderPSID) return res.status(400).json({ error: "Missing senderPSID in request body" });
-        await UserState.setBotPaused(senderPSID, true, senderName);
-        res.json({ success: true, senderPSID, botPaused: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ── API: Manually resume bot for a user ───────────────────────────────────────
-app.post("/api/bot/resume", requireApiKey, async (req, res) => {
-    try {
-        const { senderPSID, senderName } = req.body;
-        if (!senderPSID) return res.status(400).json({ error: "Missing senderPSID in request body" });
-        await UserState.setBotPaused(senderPSID, false, senderName);
-        res.json({ success: true, senderPSID, botPaused: false });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
