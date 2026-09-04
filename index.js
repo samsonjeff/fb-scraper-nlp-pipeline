@@ -194,11 +194,11 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                     if (PAUSE_CMD_REGEX.test(echoText)) {
                         console.log(`⏸️  Operator command in Page Inbox: PAUSE for user ${targetPSID}`);
                         await UserState.setBotPaused(targetPSID, true);
-                        await sendMessage(targetPSID, "⏸️ Naka-pause na po ang bot assistant. Tutugon na ang ating human operator.");
+                        // Silent: Do not send automated messages when operator pauses
                     } else if (RESUME_CMD_REGEX.test(echoText)) {
                         console.log(`▶️  Operator command in Page Inbox: RESUME for user ${targetPSID}`);
                         await UserState.setBotPaused(targetPSID, false);
-                        await sendMessage(targetPSID, "▶️ Aktibo na muli ang automated bot assistant ng MDRRMC Talisay Batangas.");
+                        // Silent: Do not send automated messages when operator resumes
                     } else {
                         // ── Log operator's actual replies so Gemini has context when bot resumes ──
                         const isPausedForUser = await UserState.isBotPaused(targetPSID);
@@ -313,24 +313,67 @@ async function generateAiResponse(userMessage, senderPSID, senderName) {
     // Check if we have a valid name (not null, not placeholder like "User 1234")
     const hasValidName = senderName && !senderName.startsWith("User ") && senderName !== "Unknown User";
 
-    const personalizedPrompt = hasValidName
-        ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot nang may paggalang (halimbawa: "Magandang araw po, ${senderName}!"), ngunit HUWAG maglagay ng titulo o prefix tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms.". Huwag mo na siyang hingan ng pangalan dahil may record na tayo nito.`
-        : `${SYSTEM_PROMPT}\n\nWala pang record ng pangalan ang kausap mo sa system. Batiin lamang siya ng "Magandang araw po!" (HUWAG gumamit ng placeholder tulad ng "User", ID, o numero). Kasama sa mga hihingin mong detalye, siguraduhing magalang na hingin at itanong ang kanyang buong pangalan.`;
-    // Fetch conversation history for context
-    const { data: history } = await supabase
+    const nameInstruction = hasValidName
+        ? `Ang pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot nang may paggalang (halimbawa: "Magandang araw po, ${senderName}!"), ngunit HUWAG maglagay ng titulo tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms.". Huwag mo na siyang hingan ng pangalan dahil may record na tayo nito.`
+        : `Wala pang record ng pangalan ang kausap mo sa system. Batiin lamang siya ng "Magandang araw po!" at magalang na hingin ang kanyang buong pangalan.`;
+
+    // ── Fetch conversation history (Past 30 minutes) ──
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    let { data: history } = await supabase
         .from("conversations")
-        .select("user_message, ai_reply")
+        .select("user_message, ai_reply, provider, sender_name, timestamp")
         .eq("sender_psid", senderPSID)
-        .order("timestamp", { ascending: false })
-        .limit(10);
+        .gte("timestamp", thirtyMinutesAgo)
+        .order("timestamp", { ascending: true });
 
-    const contextMessages = (history || []).reverse().map(h =>
-        `User: ${h.user_message}\nBot: ${h.ai_reply}`
-    ).join("\n---\n");
+    // Fallback: If no messages in the past 30 minutes, get the last 10 messages
+    if (!history || history.length === 0) {
+        const { data: fallbackHistory } = await supabase
+            .from("conversations")
+            .select("user_message, ai_reply, provider, sender_name, timestamp")
+            .eq("sender_psid", senderPSID)
+            .order("timestamp", { ascending: false })
+            .limit(10);
+        history = (fallbackHistory || []).reverse();
+    }
 
-    const contextPrompt = contextMessages
-        ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
-        : "First message from user. Respond to:";
+    // Build structured conversation log separating Citizen, Operator, and Bot
+    const contextLines = [];
+    for (const h of (history || [])) {
+        if (h.provider === "human_operator" || h.user_message === "[OPERATOR]") {
+            if (h.ai_reply) {
+                contextLines.push(`[Page Operator / Admin]: ${h.ai_reply}`);
+            }
+        } else {
+            if (h.user_message && h.user_message !== "[OPERATOR]") {
+                contextLines.push(`[Citizen - ${senderName || "User"}]: ${h.user_message}`);
+            }
+            if (h.ai_reply && !h.ai_reply.startsWith("[BOT PAUSED")) {
+                contextLines.push(`[Bot Assistant]: ${h.ai_reply}`);
+            }
+        }
+    }
+
+    const contextPrompt = contextLines.length > 0
+        ? `--- NAKARAANG PAG-UUSAP (Huling 30 Minuto) ---\n${contextLines.join("\n")}\n----------------------------------------------\nBagong mensahe ng Citizen:\n"${userMessage}"`
+        : `Unang mensahe mula sa Citizen:\n"${userMessage}"`;
+
+    const personalizedPrompt = `${SYSTEM_PROMPT}
+
+${nameInstruction}
+
+--- MAHALAGANG TUNTUNIN SA PAGSUSURI NG NAKARAANG PAG-UUSAP (ANTI-DUPLICATION) ---
+1. Suriing mabuti ang NAKARAANG PAG-UUSAP (kasama ang mga sinabi ng Citizen at ng Page Operator):
+   - Pangalan ng Citizen
+   - Barangay sa Talisay Batangas (hal: Poblacion 5, Sampaloc, Tumaway, Banga, etc.)
+   - Landmark o Lugar (hal: malapit sa bakery, simbahan, poste, etc.)
+   - Contact Number (hal: 09375773334)
+   - Tulong na kailangan o Sitwasyon (hal: nagtumbahang mga poste, rescue, baha, etc.)
+2. MAHIGPIT NA PANUNTUNAN:
+   - HUWAG NANG MULING HINGIN ang mga impormasyon o detalyeng NAIBIGAY NA o nabanggit na sa nakaraang pag-uusap (kahit noong naka-pause ang bot o kausap ang operator).
+   - Kumpirmahin nang maikli at magalang ang mga natanggap nang detalye.
+   - Hingin LAMANG ang mga natitirang KULANG na impormasyon (kung may kulang pa).
+3. Kung kumpleto na ang lahat ng kinakailangang detalye (Barangay, Landmark, Contact, Tulong), ipaalam nang maikli na kumpleto na ang impormasyon at ipinapasa na sa rescue/response team ng Talisay MDRRMC.`;
 
     // ── Gemini Multi-Key Pool ────────────────────────────────────────────────
     const maxAttempts = Math.min(geminiPool.pool.length, 3);
@@ -351,7 +394,7 @@ async function generateAiResponse(userMessage, senderPSID, senderName) {
             console.log(`🤖 Requesting Gemini (attempt ${attempt + 1}/${maxAttempts})...`);
             const result = await client.models.generateContent({
                 model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
-                contents: `${contextPrompt}\n${userMessage}`,
+                contents: `${contextPrompt}\n\nSagutin ang Citizen nang may pagsasaalang-alang sa mga naibigay nang detalye:`,
                 config: { systemInstruction: personalizedPrompt }
             });
 
