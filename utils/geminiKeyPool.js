@@ -53,7 +53,7 @@ let currentIndex = 0;   // round-robin pointer
 /**
  * Returns the next available { client, keyIndex }.
  * Skips keys that are on cooldown.
- * Throws if ALL keys are on cooldown (caller should fall back to Groq).
+ * Throws if ALL keys are on cooldown.
  */
 function getNextClient() {
     const now = Date.now();
