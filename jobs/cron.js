@@ -60,12 +60,10 @@ function startCronJobs() {
         }
     }, syncIntervalMs);
     // ── Dedup table cleanup ────────────────────────────────────────────────────
-    // Purges processed_messages rows older than 10 minutes every hour.
-    // Meta’s webhook retry window is ~60s, so 10 min is a very safe TTL.
-    const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // every 1 hour
-    const DEDUP_TTL_MINUTES    = 10;
+    const CLEANUP_INTERVAL_MS = 4 * 60 * 60 * 1000; // every 4 hours
+    const DEDUP_TTL_MINUTES    = 60;                 // 1 hour TTL
 
-    console.log(`🧹 Cron: Dedup cleanup scheduled (runs every hour, purges >10 min old)`);
+    console.log(`🧹 Cron: Dedup cleanup scheduled (runs every 4 hours, purges >1 hour old)`);
 
     setInterval(async () => {
         try {

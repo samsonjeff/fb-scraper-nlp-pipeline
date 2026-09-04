@@ -4,7 +4,6 @@ const express = require("express");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
-const Groq = require("groq-sdk");
 const supabase = require("./supabase/client");
 const Conversation = require("./models/Conversation");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
@@ -85,9 +84,6 @@ Pag - katapos mag tanong ipapaalala kay user na siguraduhing tama ang mga detaly
 dahil ito ang basihan ng amin team sa pag - sasagawa ng aksyon, na naka depende sa kailangan ng user.
 naka focus lamang ang aming team sa mga nasalanta na dulot ng bagyo, lindol, pag - putok ng bulkang Taal, at natural na kalamidad sa Talisay Batangas 4220 Philippines.
 Maging maikli at panatilihin ang iyong mga sagot sa ilalim ng 300 na letra(characters).`;
-
-// ── AI Clients ────────────────────────────────────────────────────────────────
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 // ── Supabase Connection ───────────────────────────────────────────────────────
 console.log("🗄️  Supabase client initialised ✅");
@@ -257,124 +253,66 @@ async function generateAiResponse(userMessage, senderPSID, senderName) {
     const personalizedPrompt = hasValidName
         ? `${SYSTEM_PROMPT}\n\nAng pangalan ng kausap mo ay "${senderName}". Gamitin ang kanyang pangalan sa pagbati o sagot nang may paggalang (halimbawa: "Magandang araw po, ${senderName}!"), ngunit HUWAG maglagay ng titulo o prefix tulad ng "G.", "Gng.", "Bb.", "Mr.", o "Ms.". Huwag mo na siyang hingan ng pangalan dahil may record na tayo nito.`
         : `${SYSTEM_PROMPT}\n\nWala pang record ng pangalan ang kausap mo sa system. Batiin lamang siya ng "Magandang araw po!" (HUWAG gumamit ng placeholder tulad ng "User", ID, o numero). Kasama sa mga hihingin mong detalye, siguraduhing magalang na hingin at itanong ang kanyang buong pangalan.`;
-    // ── Try Gemini (multi-key pool) ──────────────────────────────────────────
-    let selectedKey = null;
-    try {
-        selectedKey = geminiPool.getNextClient();
-    } catch (poolErr) {
-        // All keys on cooldown
-        console.warn(`⏩ ${poolErr.message} Going straight to Groq...`);
-    }
+    // Fetch conversation history for context
+    const { data: history } = await supabase
+        .from("conversations")
+        .select("user_message, ai_reply")
+        .eq("sender_psid", senderPSID)
+        .order("timestamp", { ascending: false })
+        .limit(10);
 
-    if (selectedKey) {
-        const { client, keyIndex } = selectedKey;
+    const contextMessages = (history || []).reverse().map(h =>
+        `User: ${h.user_message}\nBot: ${h.ai_reply}`
+    ).join("\n---\n");
+
+    const contextPrompt = contextMessages
+        ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
+        : "First message from user. Respond to:";
+
+    // ── Gemini Multi-Key Pool ────────────────────────────────────────────────
+    const maxAttempts = Math.min(geminiPool.pool.length, 3);
+    let lastError = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        let client, keyIndex;
         try {
-            // Get last 10 messages from this user
-            const { data: history } = await supabase
-                .from("conversations")
-                .select("user_message, ai_reply")
-                .eq("sender_psid", senderPSID)
-                .order("timestamp", { ascending: false })
-                .limit(10);
+            const keyInfo = geminiPool.getNextClient();
+            client = keyInfo.client;
+            keyIndex = keyInfo.keyIndex;
+        } catch (poolErr) {
+            console.warn(`⚠️ Pool error: ${poolErr.message}`);
+            throw poolErr;
+        }
 
-            // Build context string
-            const contextMessages = (history || []).reverse().map(h =>
-                `User: ${h.user_message}\nBot: ${h.ai_reply}`
-            ).join("\n---\n");
-
-            const contextPrompt = contextMessages
-                ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
-                : "First message from user. Respond to:";
-
-            console.log("🤖 Trying Gemini with conversation context...");
+        try {
+            console.log(`🤖 Requesting Gemini (attempt ${attempt + 1}/${maxAttempts})...`);
             const result = await client.models.generateContent({
                 model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
                 contents: `${contextPrompt}\n${userMessage}`,
                 config: { systemInstruction: personalizedPrompt }
             });
+
             const reply = result.text;
             if (!reply) throw new Error("Empty response from Gemini");
+
             console.log("✅ Gemini responded.");
             return { reply, provider: "gemini" };
-
         } catch (geminiError) {
+            lastError = geminiError;
             const is429 = geminiError.message?.includes('429') || geminiError.status === 429;
             const is503 = geminiError.message?.includes('503') || geminiError.status === 503;
+
             if (is429 || is503) {
                 geminiPool.markKeyCooldown(keyIndex);
-                console.warn(`⚠️ Gemini key hit ${is429 ? '429' : '503 (high demand)'}. Trying next key...`);
-                // Attempt once more with a different key
-                try {
-                    const retry = geminiPool.getNextClient();
-                    const { data: history } = await supabase
-                        .from("conversations")
-                        .select("user_message, ai_reply")
-                        .eq("sender_psid", senderPSID)
-                        .order("timestamp", { ascending: false })
-                        .limit(10);
-                    const contextMessages = (history || []).reverse().map(h =>
-                        `User: ${h.user_message}\nBot: ${h.ai_reply}`
-                    ).join("\n---\n");
-                    const contextPrompt = contextMessages
-                        ? `Previous conversation:\n${contextMessages}\n\nNow respond to:`
-                        : "First message from user. Respond to:";
-                    const retryResult = await retry.client.models.generateContent({
-                        model: process.env.GEMINI_MODEL || "models/gemini-2.5-flash",
-                        contents: `${contextPrompt}\n${userMessage}`,
-                        config: { systemInstruction: personalizedPrompt }
-                    });
-                    const retryReply = retryResult.text;
-                    if (!retryReply) throw new Error("Empty response from Gemini (retry)");
-                    console.log("✅ Gemini responded (retry with next key).");
-                    return { reply: retryReply, provider: "gemini" };
-                } catch (retryErr) {
-                    const retryIs429 = retryErr.message?.includes('429') || retryErr.status === 429;
-                    if (retryIs429 && retryErr !== poolErr) {
-                        // If the retry key also got a keyIndex, cool it down too
-                    }
-                    console.warn(`⚠️ Gemini retry also failed. Falling back to Groq...`);
-                }
+                console.warn(`⚠️ Gemini key hit ${is429 ? '429' : '503'}. Trying next key in pool...`);
             } else {
-                console.warn(`⚠️ Gemini failed: ${geminiError.message || geminiError}. Falling back to Groq...`);
+                console.error(`❌ Gemini call failed: ${geminiError.message || geminiError}`);
+                throw geminiError;
             }
         }
     }
 
-    // ── Groq Fallback ────────────────────────────────────────────────────────
-    try {
-        // Same for Groq
-        const { data: history } = await supabase
-            .from("conversations")
-            .select("user_message, ai_reply")
-            .eq("sender_psid", senderPSID)
-            .order("timestamp", { ascending: false })
-            .limit(10);
-
-        const contextMessages = (history || []).reverse().map(h =>
-            `User: ${h.user_message}\nBot: ${h.ai_reply}`
-        ).join("\n---\n");
-
-        const messages = [
-            { role: "system", content: personalizedPrompt },
-            ...(contextMessages ? [{ role: "user", content: `Context:\n${contextMessages}` }] : []),
-            { role: "user", content: userMessage }
-        ];
-
-        const completion = await groq.chat.completions.create({
-            messages,
-            model: process.env.GROQ_MODEL || "qwen/qwen3.6-27b",
-            temperature: 0.7,
-            max_tokens: 300,
-        });
-        const reply = completion.choices[0]?.message?.content;
-        if (!reply) throw new Error("Empty response from Groq");
-        console.log("✅ Groq responded.");
-        return { reply, provider: "groq" };
-
-    } catch (groqError) {
-        console.error(`❌ Groq failed: ${groqError.message}`);
-        throw groqError;
-    }
+    throw lastError || new Error("All Gemini attempts failed.");
 }
 
 // ── Strip markdown formatting for plain-text channels (e.g. Messenger) ─────────
@@ -487,8 +425,7 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     const poolStatus = geminiPool.getPoolStatus();
-    console.log(`🤖 Primary AI   : Gemini (${poolStatus.totalKeys} keys, model: ${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
-    console.log(`🔁 Fallback AI  : Groq  (${process.env.GROQ_MODEL || "llama-3.1-8b-instant"})`);
+    console.log(`🤖 AI Engine   : Gemini (${poolStatus.totalKeys} keys in pool, model: ${process.env.GEMINI_MODEL || "gemini-2.5-flash"})`);
     console.log(`🔑 Verify token : ${process.env.VERIFY_TOKEN ? "CONFIGURED" : "NOT SET"}`);
     console.log(`🛡️  App secret   : ${process.env.APP_SECRET ? "CONFIGURED" : "NOT SET (Recommended for webhook verification)"}`);
     console.log(`📰 FB Scraper   : active (FB_PAGE_ID: ${process.env.FB_PAGE_ID || 'NOT SET'})`);

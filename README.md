@@ -32,7 +32,7 @@
 **fb-scraper-nlp-pipeline** is a production-ready backend pipeline designed for emergency and community incident monitoring in **Talisay, Batangas**. 
 
 The system operates two primary workflows:
-1. **Automated Emergency Messaging**: Handles incoming Facebook Messenger queries with AI-powered replies (Gemini with Groq fallback), extracting reported barangay locations and emergency details.
+1. **Automated Emergency Messaging**: Handles incoming Facebook Messenger queries with AI-powered replies (Google Gemini with multi-key rotation pool), extracting reported barangay locations and emergency details.
 2. **Public Page Activity Scraping**: Periodically scrapes public Facebook Page posts and comments using Meta Graph API, parsing texts for incident keywords and mapping them to official barangays in real time.
 
 All structured data is persisted in a centralized **Supabase (PostgreSQL)** database.
@@ -52,7 +52,7 @@ All structured data is persisted in a centralized **Supabase (PostgreSQL)** data
 |---|---|
 | **Webhook Integration** | Real-time reception of Facebook Page Messenger webhooks |
 | **Profile Extraction** | Real-time resolution of sender real name via Meta Graph API with in-memory caching |
-| **Dual AI Engine** | **Google Gemini** as primary LLM with **Groq (Llama 3)** as reliable fallback |
+| **AI Engine** | **Google Gemini** with multi-key rotation pool and automatic cooldown handling |
 | **Entity Extraction** | Automatic extraction of Talisay barangays and emergency keywords |
 | **Conversation Logging** | Full conversation history with sender real name logged into `conversations` table |
 | **Unsent Message Sync** | Periodic Graph API thread reconciliation detecting and pruning messages deleted/unsent by users |
@@ -83,7 +83,7 @@ All parsed locations are matched strictly against the 21 official barangays of T
 |---|---|
 | **Runtime & Server** | Node.js, Express.js |
 | **Database** | Supabase (PostgreSQL with RLS) |
-| **AI Providers** | `@google/genai` (Gemini 2.5 Flash), `groq-sdk` (Llama 3.3 70B) |
+| **AI Provider** | `@google/genai` (Gemini Flash with multi-key pool) |
 | **Social API** | Meta Graph API (v25.0) |
 | **Utilities** | `localtunnel`, `node-cron`, `helmet`, `express-rate-limit` |
 
@@ -123,11 +123,9 @@ SCRAPER_INTERVAL_SECONDS=300
 # Messenger sync interval in seconds (default: 300 = every 5 minutes)
 MESSENGER_SYNC_INTERVAL_SECONDS=300
 
-# ── AI Providers ──────────────────────────────────────────────────────────────
-GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=models/gemini-2.5-flash
-GROQ_API_KEY=your_groq_api_key
-GROQ_MODEL=llama-3.3-70b-versatile
+# ── AI Configuration ──────────────────────────────────────────────────────────
+GEMINI_API_KEYS=key1,key2,key3,key4,key5
+GEMINI_MODEL=models/gemini-3.6-flash
 
 # ── Bot Config ────────────────────────────────────────────────────────────────
 BOT_SYSTEM_PROMPT="Ikaw ay Tagalog assistant, I'm replying to customers in Tagalog..."
@@ -202,6 +200,19 @@ end $$;
 
 create index if not exists fb_comments_post_id_idx  on fb_comments (post_id);
 create index if not exists fb_comments_barangay_idx on fb_comments (barangay);
+
+-- 4. Processed Messages table (Webhook Deduplication)
+-- Prevents duplicate processing when multiple server instances receive the same message.
+create table if not exists processed_messages (
+  mid          text primary key,
+  processed_at timestamptz default now()
+);
+alter table processed_messages enable row level security;
+do $$ begin
+  create policy "service_role full access" on processed_messages
+    for all to service_role using (true) with check (true);
+exception when duplicate_object then null;
+end $$;
 ```
 
 ---

@@ -1,6 +1,5 @@
 require("dotenv").config();
 const { GoogleGenAI } = require("@google/genai");
-const Groq = require("groq-sdk");
 const axios = require("axios");
 
 async function runDiagnostics() {
@@ -109,38 +108,8 @@ async function runDiagnostics() {
         console.error("💡 If you are getting a 'Model not found' error, try setting GEMINI_MODEL to 'gemini-2.5-flash' without the 'models/' prefix.\n");
     }
 
-    // ── 4. Test Groq Fallback API ───────────────────────
-    console.log("4️⃣  Testing Groq API...");
-    try {
-        if (!process.env.GROQ_API_KEY) {
-            throw new Error("GROQ_API_KEY environment variable is not set.");
-        }
-        const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-        const modelName = process.env.GROQ_MODEL || "llama-3.1-8b-instant";
-
-        console.log(`🤖 Requesting Groq model: ${modelName}...`);
-        const completion = await groq.chat.completions.create({
-            messages: [
-                { role: "system", content: "Reply with Pong." },
-                { role: "user", content: "Ping" }
-            ],
-            model: modelName,
-            max_tokens: 10,
-        });
-
-        const text = completion.choices[0]?.message?.content;
-        if (!text || text.trim() === "") {
-            throw new Error("Received empty response from Groq API.");
-        }
-        console.log(`✅ Groq API responds correctly: "${text.trim()}"\n`);
-    } catch (err) {
-        hasErrors = true;
-        console.error("❌ Groq API Test Failed:", err.message);
-        console.error("💡 Verify that GROQ_API_KEY is correct. Make sure the GROQ_MODEL is available and correct.\n");
-    }
-
-    // ── 5. Test Facebook Page access token ──────────────
-    console.log("5️⃣  Testing Facebook Page Access Token...");
+    // ── 4. Test Facebook Page access token ──────────────
+    console.log("4️⃣  Testing Facebook Page Access Token...");
     try {
         if (!process.env.PAGE_ACCESS_TOKEN || !process.env.FB_PAGE_ID) {
             throw new Error("PAGE_ACCESS_TOKEN or FB_PAGE_ID is not set.");
