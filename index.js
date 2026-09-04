@@ -6,9 +6,14 @@ const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
 const supabase = require("./supabase/client");
 const Conversation = require("./models/Conversation");
+const UserState = require("./models/UserState");
 const { requireApiKey, verifyFacebookSignature } = require("./utils/auth");
 const { getUserProfile } = require("./utils/meta");
 const geminiPool = require("./utils/geminiKeyPool");
+
+// Human Handoff / Bot Pause commands
+const PAUSE_CMD_REGEX = /^\/(pause|stop)$/i;
+const RESUME_CMD_REGEX = /^\/(resume|continue)$/i;
 
 const app = express();
 
@@ -180,13 +185,48 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
 
     for (const entry of req.body.entry || []) {
         for (const event of entry.messaging || []) {
+            // ── 1. Operator Echo Detection (Human typing from Facebook Page Inbox) ──
+            if (event.message?.is_echo) {
+                const targetPSID = event.recipient?.id;
+                const echoText = (event.message?.text || "").trim();
+
+                if (targetPSID && echoText) {
+                    if (PAUSE_CMD_REGEX.test(echoText)) {
+                        console.log(`⏸️  Operator command in Page Inbox: PAUSE for user ${targetPSID}`);
+                        await UserState.setBotPaused(targetPSID, true);
+                        await sendMessage(targetPSID, "⏸️ Naka-pause na po ang bot assistant. Tutugon na ang ating human operator.");
+                    } else if (RESUME_CMD_REGEX.test(echoText)) {
+                        console.log(`▶️  Operator command in Page Inbox: RESUME for user ${targetPSID}`);
+                        await UserState.setBotPaused(targetPSID, false);
+                        await sendMessage(targetPSID, "▶️ Aktibo na muli ang automated bot assistant ng MDRRMC Talisay Batangas.");
+                    } else {
+                        // ── Log operator's actual replies so Gemini has context when bot resumes ──
+                        const isPausedForUser = await UserState.isBotPaused(targetPSID);
+                        if (isPausedForUser) {
+                            const conversationId = event.message?.mid || crypto.randomUUID();
+                            await Conversation.upsert({
+                                conversationId,
+                                senderPSID: targetPSID,
+                                userMessage: "[OPERATOR]",
+                                aiReply: echoText,
+                                provider: "human_operator",
+                                senderName: "Page Operator"
+                            }).catch(err => console.warn("⚠️ Failed to log operator reply:", err.message));
+                            console.log(`💬 Logged operator reply for PSID ${targetPSID}: "${echoText.substring(0, 60)}..."`);
+                        }
+                    }
+                }
+                // Always skip echo messages from standard bot processing
+                continue;
+            }
+
             if (!event.sender?.id || !event.message?.text) continue;
 
             const senderPSID = event.sender.id;
-            const userMessage = event.message.text;
+            const userMessage = event.message.text.trim();
             const mid = event.message?.mid;
 
-            // ── Dedup: skip if another instance (or a retry) already claimed this mid ──
+            // ── 2. Message Deduplication ──
             if (mid) {
                 const claimed = await tryClaimMessage(mid);
                 if (!claimed) {
@@ -195,6 +235,29 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                 }
             }
 
+            // ── 3. Check if Bot is Paused for this User ──
+            const isPaused = await UserState.isBotPaused(senderPSID);
+            if (isPaused) {
+                console.log(`⏸️  [PAUSED] Bot is paused for PSID ${senderPSID}. Skipping AI reply to allow human operator.`);
+                const conversationId = mid || crypto.randomUUID();
+                const profile = await getUserProfile(senderPSID).catch(() => ({ name: "Unknown User" }));
+                const effectiveName = (profile.name && !profile.name.startsWith("User "))
+                    ? profile.name
+                    : "Unknown User";
+
+                await Conversation.upsert({
+                    conversationId,
+                    senderPSID,
+                    userMessage,
+                    aiReply: "[BOT PAUSED - HUMAN OPERATOR ACTIVE]",
+                    provider: "human_handoff",
+                    senderName: effectiveName
+                }).catch(err => console.warn("⚠️ Failed to log paused conversation:", err.message));
+
+                continue;
+            }
+
+            // ── 5. Standard AI processing ──
             try {
                 // Fetch sender's real name & profile pic from Meta Graph API
                 const profile = await getUserProfile(senderPSID);
@@ -202,7 +265,7 @@ app.post("/webhook", webhookLimiter, verifyFacebookSignature, async (req, res) =
                 const { reply: rawReply, provider } = await generateAiResponse(userMessage, senderPSID, profile.name);
                 const reply = stripMarkdown(rawReply);
                 // Use Facebook message ID if available, otherwise generate a UUID
-                const conversationId = event.message?.mid || crypto.randomUUID();
+                const conversationId = mid || crypto.randomUUID();
 
                 // Determine the effective sender name to store
                 const effectiveName = (profile.name && !profile.name.startsWith("User "))
@@ -416,6 +479,41 @@ app.get("/api/user-history/:senderPSID", requireApiKey, async (req, res) => {
             totalMessages: (history || []).length,
             conversationHistory: formattedHistory
         });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── API: Check bot pause state for a user ─────────────────────────────────────
+app.get("/api/bot/state/:senderPSID", requireApiKey, async (req, res) => {
+    try {
+        const { senderPSID } = req.params;
+        const isPaused = await UserState.isBotPaused(senderPSID);
+        res.json({ senderPSID, botPaused: isPaused });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── API: Manually pause bot for a user ────────────────────────────────────────
+app.post("/api/bot/pause", requireApiKey, async (req, res) => {
+    try {
+        const { senderPSID, senderName } = req.body;
+        if (!senderPSID) return res.status(400).json({ error: "Missing senderPSID in request body" });
+        await UserState.setBotPaused(senderPSID, true, senderName);
+        res.json({ success: true, senderPSID, botPaused: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── API: Manually resume bot for a user ───────────────────────────────────────
+app.post("/api/bot/resume", requireApiKey, async (req, res) => {
+    try {
+        const { senderPSID, senderName } = req.body;
+        if (!senderPSID) return res.status(400).json({ error: "Missing senderPSID in request body" });
+        await UserState.setBotPaused(senderPSID, false, senderName);
+        res.json({ success: true, senderPSID, botPaused: false });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

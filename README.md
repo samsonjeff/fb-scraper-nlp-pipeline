@@ -55,6 +55,7 @@ All structured data is persisted in a centralized **Supabase (PostgreSQL)** data
 | **AI Engine** | **Google Gemini** with multi-key rotation pool and automatic cooldown handling |
 | **Entity Extraction** | Automatic extraction of Talisay barangays and emergency keywords |
 | **Conversation Logging** | Full conversation history with sender real name logged into `conversations` table |
+| **Human Handoff (Bot Pause)** | Pause bot replies (`/pause`, `/stop`) or resume (`/resume`, `/continue`) for live operator takeover |
 | **Unsent Message Sync** | Periodic Graph API thread reconciliation detecting and pruning messages deleted/unsent by users |
 
 ### 2. FB Page Scraper Module (Public Activity Processing)
@@ -213,6 +214,22 @@ do $$ begin
     for all to service_role using (true) with check (true);
 exception when duplicate_object then null;
 end $$;
+
+-- 5. User States table (Human Handoff / Bot Pause)
+-- Tracks whether automated AI replies are paused for a specific user to allow human operator chats.
+create table if not exists user_states (
+  sender_psid text primary key,
+  sender_name text default 'Unknown User',
+  bot_paused  boolean not null default false,
+  paused_at   timestamptz,
+  updated_at  timestamptz not null default now()
+);
+alter table user_states enable row level security;
+do $$ begin
+  create policy "service_role full access" on user_states
+    for all to service_role using (true) with check (true);
+exception when duplicate_object then null;
+end $$;
 ```
 
 ---
@@ -228,7 +245,26 @@ end $$;
 | `GET` | `/scraper/status` | None | Returns the status, last run time, and statistics of the scraper |
 | `GET` | `/api/debug/conversations` | `x-api-key: <INTERNAL_API_KEY>` | Fetches recent conversations, posts, and comments |
 | `GET` | `/api/user-history/:senderPSID` | `x-api-key: <INTERNAL_API_KEY>` | Fetches chat history formatted for NLP context for a given PSID |
+| `GET` | `/api/bot/state/:senderPSID` | `x-api-key: <INTERNAL_API_KEY>` | Returns whether automated bot replies are currently paused for a user |
+| `POST` | `/api/bot/pause` | `x-api-key: <INTERNAL_API_KEY>` | Manually pauses automated bot replies for a specific `senderPSID` |
+| `POST` | `/api/bot/resume` | `x-api-key: <INTERNAL_API_KEY>` | Manually resumes automated bot replies for a specific `senderPSID` |
 | `POST` | `/api/reset-database` | `x-api-key: <INTERNAL_API_KEY>` | Clears all conversation records from the database |
+
+---
+
+## Human Handoff & Bot Pause / Resume Commands
+
+When a human operator from the Facebook Page Inbox / Meta Business Suite wants to take over a conversation without the bot interfering:
+
+| Action | Commands (Operator Only) | Description |
+|---|---|---|
+| **Stop / Pause Bot** | `/pause` or `/stop` | Pauses AI replies for that specific user. User messages are still logged to the database, but no bot response is generated. |
+| **Resume / Continue Bot** | `/resume` or `/continue` | Re-enables automated AI responses for that specific user. |
+
+> [!TIP]
+> - **Operator-only:** Only the human operator typing in Facebook Page Inbox / Meta Business Suite can issue these commands. Users cannot pause/resume the bot themselves.
+> - **Context-aware handoff:** While the bot is paused, operator replies are automatically logged to the database so that when the bot resumes, Gemini AI has full context of what the operator discussed with the user — no duplicate questions.
+> - **Automatic Isolation:** Pausing only affects the specific user thread; other users chatting with the page continue receiving automated bot replies without disruption.
 
 ---
 
